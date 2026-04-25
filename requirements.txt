@@ -4,3 +4,4 @@ xlsxwriter
 xlrd
 streamlit
 plotly
+pdfplumber
