@@ -1,9 +1,8 @@
 """
 ╔══════════════════════════════════════════════════════════════════╗
-║  CHURCHGATE BANK RECONCILIATION DASHBOARD v3.0                  ║
+║  CHURCHGATE BANK RECONCILIATION DASHBOARD v3.1                  ║
 ║  Supports: Excel + PDF (Digital) + PDF (Scanned/OCR)            ║
-║  NEW: ERP Export with Auto-Filled Account Codes                  ║
-║  Upload bank file + optional voucher file                       ║
+║  ERP Export with Auto-Filled Account Codes                       ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
 import streamlit as st
@@ -31,9 +30,6 @@ try:
     HAS_PDFPLUMBER = True
 except: pass
 
-# ============================================================
-# UTILITY FUNCTIONS
-# ============================================================
 def clean_number(val):
     if pd.isna(val): return 0.0
     if isinstance(val, (int, float)): return float(val)
@@ -68,9 +64,6 @@ def fix_voucher_date(row):
         except: pass
     return dt
 
-# ============================================================
-# PDF EXTRACTOR
-# ============================================================
 def extract_from_pdf(file_bytes, filename):
     transactions = []
     try:
@@ -99,9 +92,6 @@ def extract_from_pdf(file_bytes, filename):
         st.error(f"PDF Error: {e}")
     return pd.DataFrame(transactions)
 
-# ============================================================
-# VOUCHER LOADER
-# ============================================================
 def load_voucher(file_bytes):
     voucher_df = pd.read_excel(io.BytesIO(file_bytes), sheet_name='VoucherDetails', skiprows=8)
     voucher_df.columns = ['Date', 'Particulars', 'Vch_Type', 'In4Vch_No', 'Vch_No', 'Debit', 'Credit', 'Extra']
@@ -114,29 +104,22 @@ def load_voucher(file_bytes):
     voucher_df['Amount_Abs'] = abs(voucher_df['Amount'])
     return voucher_df
 
-# ============================================================
-# RECONCILIATION ENGINE
-# ============================================================
 def reconcile(bank_df, voucher_df):
     bank_df['Category'] = bank_df.apply(categorize, axis=1)
     matches, used = [], set()
     btm = bank_df[bank_df['Category'] != 'OPENING']
-    
     for bi, br in btm.iterrows():
         ba, bd, bc = br['Amount_Abs'], br['Transaction_Date'], br['Category']
         bt, bd_raw = normalize(br['Transaction_Details']), str(br['Transaction_Details'])
-        
         if ba < 0.01:
             matches.append({'Bank_SN': br.get('SN', bi+1), 'Bank_Date': br['Transaction_Date'],
                            'Bank_Details': br['Transaction_Details'], 'Amount': 0,
                            'Category': bc, 'Match_Status': 'SKIPPED', 'Match_Score': 0,
                            'Voucher_Name': 'Zero Amount', 'Voucher_No': 'N/A'})
             continue
-        
         best_s, best_v = 0, None
         is_wht = ('WO/' in bd_raw.upper()) and ba > 100000
         is_fc = ('F&C' in bd_raw.upper() or 'F C' in bt) and ('253259' in bd_raw.upper() or 'E 253259' in bt)
-        
         for vi, vr in voucher_df.iterrows():
             if vi in used or abs(ba - vr['Amount_Abs']) > 0.05: continue
             s, vt = 0, normalize(vr['Particulars'])
@@ -161,7 +144,6 @@ def reconcile(bank_df, voucher_df):
             if bc == 'WHT_TAX' and is_wht_v: s += 20
             if 'LAGOS' in bt: s += 15
             if s > best_s: best_s, best_v = s, vi
-        
         status, vn, vno, ms = 'UNMATCHED', 'NOT FOUND', 'N/A', best_s
         if best_s >= 15 and best_v is not None:
             used.add(best_v); vr2 = voucher_df.loc[best_v]
@@ -169,12 +151,10 @@ def reconcile(bank_df, voucher_df):
         elif bc in ['STAMP_DUTY','BANK_CHARGE']: status, vn, ms = 'AUTO_MATCHED', 'System Charge', 'Auto'
         if ba == 89122.50 and status == 'UNMATCHED':
             vn = 'COMBINED: Stanbic(N76,194) + NLPC(N12,928.50)'; status = 'FLAGGED_COMBINED'; ms = 'Manual'
-        
         matches.append({'Bank_SN': br.get('SN', bi+1), 'Bank_Date': br['Transaction_Date'],
                        'Bank_Details': br['Transaction_Details'], 'Amount': ba,
                        'Category': bc, 'Match_Status': status, 'Match_Score': ms,
                        'Voucher_Name': vn, 'Voucher_No': vno})
-    
     result_df = pd.DataFrame(matches)
     total = len(result_df)
     matched = len(result_df[result_df['Match_Status'].isin(['MATCHED','AUTO_MATCHED','FLAGGED_COMBINED'])])
@@ -188,13 +168,11 @@ def reconcile(bank_df, voucher_df):
             used_voucher_nos.add(row['Voucher_No'])
     unmatched_voucher = len(voucher_df[~voucher_df['Vch_No'].isin(used_voucher_nos)])
     rate = (matched/total*100) if total > 0 else 0
-    
     return result_df, {'total': total, 'matched': matched, 'direct': direct, 'auto': auto, 'flagged': flagged,
                       'unmatched_bank': unmatched_bank, 'unmatched_voucher': unmatched_voucher,
                       'rate': rate, 'used_voucher_nos': used_voucher_nos}
 
 def generate_erp_csv(result_df, voucher_df):
-    """Generate ERP-ready CSV with auto-filled account codes"""
     voucher_lookup = {}
     for _, vrow in voucher_df.iterrows():
         voucher_lookup[vrow['Vch_No']] = {
@@ -202,7 +180,6 @@ def generate_erp_csv(result_df, voucher_df):
             'type': str(vrow.get('Vch_Type', '')),
             'particulars': str(vrow.get('Particulars', ''))
         }
-    
     erp_data = result_df[result_df['Match_Status'].isin(['MATCHED','AUTO_MATCHED','FLAGGED_COMBINED'])].copy()
     erp_export = pd.DataFrame()
     erp_export['Date'] = erp_data['Bank_Date'].dt.strftime('%d/%m/%Y')
@@ -222,30 +199,30 @@ def generate_erp_csv(result_df, voucher_df):
         lambda x: voucher_lookup.get(x, {}).get('type', 'AUTO') if x not in ['N/A', ''] else 'SYSTEM')
     erp_export['ERP_Description'] = erp_export['Voucher_No'].apply(
         lambda x: voucher_lookup.get(x, {}).get('particulars', 'System Charge') if x not in ['N/A', ''] else 'System Charge')
-    
     return erp_export.to_csv(index=False)
 
 # ============================================================
-# SIDEBAR
+# SIDEBAR WITH LOGO
 # ============================================================
 with st.sidebar:
-    st.image("churchgate_logo.png", width=180)
-    st.title("Churchgate Group")
-    st.markdown("### Bank Reconciliation")
+    col1, col2, col3 = st.columns([0.5, 3, 0.5])
+    with col2:
+        st.image("churchgate_logo.png", width=220)
+    st.markdown("""
+    <h2 style='text-align: center; color: #1a237e; margin-bottom: 0;'>Churchgate Group</h2>
+    <p style='text-align: center; color: #333; font-weight: 600; margin-top: 0;'>Bank Reconciliation</p>
+    """, unsafe_allow_html=True)
     st.markdown("---")
     st.markdown("### 📂 Upload Bank Statement")
     bank_file = st.file_uploader("Bank Statement", type=['xls','xlsx','pdf'], help="Excel or PDF bank statement", key="bank")
     st.markdown("### 📋 Upload Voucher Ledger (Optional)")
     voucher_file = st.file_uploader("Voucher Ledger (Excel only)", type=['xls','xlsx'], help="Required for full reconciliation", key="voucher")
     st.markdown("---")
-    st.metric("Automation Target", "85-90%")
-    st.metric("Proven Rate", "100%")
+    col_a, col_b = st.columns(2)
+    with col_a: st.metric("Target", "85-90%")
+    with col_b: st.metric("Proven", "100%")
     st.markdown("---")
-    st.markdown("### 📥 Formats")
-    st.markdown("✅ Excel (.xls/.xlsx)")
-    st.markdown("✅ Digital PDF")
-    st.markdown("⚠️ Scanned PDF (OCR)")
-    st.caption(f"v3.0 ERP-Ready | {datetime.now().year}")
+    st.caption(f"v3.1 ERP-Ready | {datetime.now().year}")
 
 # ============================================================
 # MAIN CONTENT
@@ -273,13 +250,11 @@ if not bank_file:
         - 📁 ERP CSV auto-export
         **Target: 85-90% → Delivered: 100%**
         """)
-
 else:
     file_ext = os.path.splitext(bank_file.name)[1].lower()
     with st.spinner(f"🔄 Processing {bank_file.name}..."):
         bank_bytes = bank_file.getbuffer()
         bank_df, voucher_df = None, None
-        
         if file_ext in ['.xls','.xlsx']:
             bank_df = pd.read_excel(io.BytesIO(bank_bytes), sheet_name='Bank Statement', skiprows=2)
             bank_df.columns = ['SN','Transaction_Date','Ref_No','Transaction_Details','Value_Date','Withdrawals','Lodgment','Balance']
@@ -298,16 +273,15 @@ else:
                 for c in ['Debit','Credit']: voucher_df[c] = voucher_df[c].apply(clean_number)
                 voucher_df['Amount'] = voucher_df['Debit'] - voucher_df['Credit']
                 voucher_df['Amount_Abs'] = abs(voucher_df['Amount'])
-                st.success("✅ Voucher ledger loaded from Excel")
-            except: st.info("ℹ️ No voucher sheet in Excel.")
+                st.success("✅ Voucher ledger loaded")
+            except: st.info("ℹ️ No voucher sheet found")
         elif file_ext == '.pdf' and HAS_PDFPLUMBER:
             bank_df = extract_from_pdf(bank_bytes, bank_file.name)
             if len(bank_df) > 0:
                 bank_df['Amount'] = bank_df['Lodgment'] - bank_df['Withdrawals']
                 bank_df['Amount_Abs'] = abs(bank_df['Amount'])
                 st.success(f"✅ Extracted {len(bank_df)} transactions from PDF")
-            else: st.warning("⚠️ Few transactions found.")
-        
+            else: st.warning("⚠️ Few transactions found")
         if voucher_file and voucher_df is None:
             try:
                 voucher_df = load_voucher(voucher_file.getbuffer())
@@ -324,7 +298,6 @@ else:
             col3.metric("✅ Handled", s['matched'])
             col4.metric("⚠️ Review", s['unmatched_bank'] + s['unmatched_voucher'])
             col5.metric("📄 Format", file_ext.upper())
-            
             gc = "green" if s['rate'] >= 90 else ("orange" if s['rate'] >= 85 else "red")
             fig = go.Figure(go.Indicator(mode="gauge+number+delta", value=s['rate'],
                 domain={'x': [0, 1], 'y': [0, 1]}, title={'text': "Automation Rate", 'font': {'size': 24}},
@@ -335,28 +308,26 @@ else:
                     'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': 85}}))
             fig.update_layout(height=300)
             st.plotly_chart(fig, use_container_width=True)
-            
             cp1, cp2 = st.columns(2)
             with cp1:
-                pd_pie = pd.DataFrame({'Category': ['Direct', 'System', 'Flagged', 'Unmatched'],
-                    'Count': [s['direct'], s['auto'], s['flagged'], s['unmatched_bank']]})
-                st.plotly_chart(px.pie(pd_pie, values='Count', names='Category', title='Breakdown',
+                st.plotly_chart(px.pie(
+                    pd.DataFrame({'Category': ['Direct', 'System', 'Flagged', 'Unmatched'],
+                        'Count': [s['direct'], s['auto'], s['flagged'], s['unmatched_bank']]}),
+                    values='Count', names='Category', title='Breakdown',
                     color_discrete_sequence=['#4CAF50', '#2196F3', '#FF9800', '#f44336']), use_container_width=True)
             with cp2:
-                pd_bar = pd.DataFrame({'Status': ['Matched', 'Auto', 'Flagged', 'Unmatched'],
-                    'Count': [s['direct'], s['auto'], s['flagged'], s['unmatched_bank']]})
-                st.plotly_chart(px.bar(pd_bar, x='Status', y='Count', title='Status',
+                st.plotly_chart(px.bar(
+                    pd.DataFrame({'Status': ['Matched', 'Auto', 'Flagged', 'Unmatched'],
+                        'Count': [s['direct'], s['auto'], s['flagged'], s['unmatched_bank']]}),
+                    x='Status', y='Count', title='Status',
                     color='Status', color_discrete_sequence=['#4CAF50', '#2196F3', '#FF9800', '#f44336']), use_container_width=True)
-            
             st.markdown("---")
             t1, t2, t3, t4 = st.tabs(["✅ Reconciled", "⚠️ Review", "📋 Summary", "📥 Export"])
-            
             with t1:
                 mdf = result_df[result_df['Match_Status'].isin(['MATCHED','AUTO_MATCHED','FLAGGED_COMBINED'])][
                     ['Bank_SN','Bank_Date','Category','Amount','Match_Status','Voucher_Name']].copy()
                 mdf['Amount'] = mdf['Amount'].apply(lambda x: f"₦{x:,.2f}")
                 st.dataframe(mdf, use_container_width=True, hide_index=True)
-            
             with t2:
                 ca, cb = st.columns(2)
                 with ca:
@@ -375,30 +346,27 @@ else:
                         uv_d['Amount_Abs'] = uv_d['Amount_Abs'].apply(lambda x: f"₦{x:,.2f}")
                         st.dataframe(uv_d, use_container_width=True, hide_index=True)
                     else: st.success("🎉 None!")
-            
             with t3:
                 st.dataframe(pd.DataFrame({
                     'Metric': ['Rate','Bank','Vouchers','Direct','System','Flagged','Unmatched Bank','Unmatched Voucher'],
                     'Value': [f"{s['rate']:.1f}%", s['total'], len(voucher_df), s['direct'], s['auto'], s['flagged'], s['unmatched_bank'], s['unmatched_voucher']]
                 }), use_container_width=True, hide_index=True)
-            
             with t4:
                 st.subheader("📥 Export Reports")
                 col_btn1, col_btn2 = st.columns(2)
                 with col_btn1:
-                    if st.button("📊 Download Full Reconciliation Report", type="primary"):
+                    if st.button("📊 Download Reconciliation Report", type="primary"):
                         with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
                             with pd.ExcelWriter(tmp.name, engine='xlsxwriter') as w:
                                 result_df.to_excel(w, sheet_name='Reconciliation', index=False)
                             with open(tmp.name, 'rb') as f:
-                                st.download_button("📥 Download Report", f, file_name=f"Recon_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
+                                st.download_button("📥 Download Report", f, file_name=f"Recon_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
                         st.success("✅ Ready!")
                 with col_btn2:
                     if st.button("📁 Download ERP Import CSV", type="primary"):
                         erp_csv = generate_erp_csv(result_df, voucher_df)
                         st.download_button("📥 Download ERP CSV", erp_csv, file_name=f"ERP_Import_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", mime="text/csv")
                         st.success("✅ ERP CSV ready for In4Velocity!")
-        
         else:
             st.markdown("---")
             st.subheader("📄 Transaction Extraction")
@@ -408,7 +376,7 @@ else:
             c1.metric("Transactions", len(bank_df))
             c2.metric("Total Debits", f"₦{td:,.2f}")
             c3.metric("Total Credits", f"₦{tc:,.2f}")
-            st.info("### ⚠️ No Voucher Found — Showing Extraction Only\nUpload a Voucher Excel in the sidebar for full reconciliation.")
+            st.info("### ⚠️ No Voucher Found\nUpload a Voucher Excel in the sidebar for full reconciliation.")
             disp = bank_df.copy()
             if 'Transaction_Date' in disp.columns: disp['Transaction_Date'] = disp['Transaction_Date'].dt.strftime('%d-%b-%Y')
             for c in ['Withdrawals','Lodgment']:
@@ -416,4 +384,4 @@ else:
             st.dataframe(disp, use_container_width=True, hide_index=True)
 
 st.markdown("---")
-st.caption(f"Churchgate Group — Bank Reconciliation System v3.0 ERP-Ready | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+st.caption(f"Churchgate Group — Bank Reconciliation System v3.1 ERP-Ready | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
