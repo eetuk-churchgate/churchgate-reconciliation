@@ -13,6 +13,8 @@ from difflib import SequenceMatcher
 import plotly.graph_objects as go
 import plotly.express as px
 
+LOGO_URL = "https://raw.githubusercontent.com/eetuk-churchgate/churchgate-reconciliation/main/churchgate_logo.png"
+
 st.set_page_config(page_title="Churchgate Bank Reconciliation", page_icon="🏦", layout="wide")
 
 HAS_PDFPLUMBER = False
@@ -170,7 +172,10 @@ def generate_erp_csv(result_df, voucher_df):
 
 # SIDEBAR
 with st.sidebar:
-    st.image("churchgate_logo.png", width=180)
+    try:
+        st.image(LOGO_URL, width=180)
+    except:
+        st.image("churchgate_logo.png", width=180)
     st.title("Churchgate Group")
     st.markdown("### Bank Reconciliation")
     st.markdown("---")
@@ -183,12 +188,12 @@ with st.sidebar:
     st.metric("Proven", "100%")
 
 # MAIN HEADER
-st.markdown("""
-<table><tr>
-<td><img src="churchgate_logo.png" width="100"></td>
-<td><h1 style="margin:0;font-size:2.2rem;color:#1a237e;">&nbsp;&nbsp;Churchgate Bank Reconciliation</h1></td>
-</tr></table>
-<h4 style="margin-top:0;color:#666;margin-left:10px;">Churchgate Group — Finance Department</h4>
+st.markdown(f"""
+<div style="display:flex;align-items:center;gap:15px;margin-bottom:5px;">
+    <img src="{LOGO_URL}" width="90" style="vertical-align:middle;">
+    <h1 style="margin:0;font-size:2.2rem;color:#1a237e;">Churchgate Bank Reconciliation</h1>
+</div>
+<h4 style="margin-top:0;color:#666;margin-left:105px;">Churchgate Group — Finance Department</h4>
 """, unsafe_allow_html=True)
 
 st.markdown("---")
