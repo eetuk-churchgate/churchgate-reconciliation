@@ -1,5 +1,9 @@
 """
-CHURCHGATE BANK RECONCILIATION DASHBOARD v3.0
+╔══════════════════════════════════════════════════════════════════╗
+║  CHURCHGATE BANK RECONCILIATION DASHBOARD v3.0                  ║
+║  Supports: Excel + PDF (Digital) + PDF (Scanned/OCR)            ║
+║  ERP Export with Auto-Filled Account Codes                       ║
+╚══════════════════════════════════════════════════════════════════╝
 """
 import streamlit as st
 import pandas as pd
@@ -16,6 +20,37 @@ import plotly.express as px
 LOGO_URL = "https://raw.githubusercontent.com/eetuk-churchgate/churchgate-reconciliation/main/churchgate_logo.png"
 
 st.set_page_config(page_title="Churchgate Bank Reconciliation", page_icon="🏦", layout="wide")
+
+# Custom CSS for dark header background and readable text
+st.markdown("""
+<style>
+.header-container {
+    background: linear-gradient(135deg, #1a237e 0%, #283593 100%);
+    border-radius: 12px;
+    padding: 20px 25px;
+    margin-bottom: 15px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+.header-container img {
+    width: 90px;
+    height: auto;
+}
+.header-container h1 {
+    color: #ffffff !important;
+    font-size: 2.2rem;
+    margin: 0;
+    padding: 0;
+    font-weight: 700;
+}
+.header-container h4 {
+    color: #bbdefb !important;
+    margin: 5px 0 0 0;
+    font-weight: 400;
+}
+</style>
+""", unsafe_allow_html=True)
 
 HAS_PDFPLUMBER = False
 try: import pdfplumber; HAS_PDFPLUMBER = True
@@ -187,13 +222,15 @@ with st.sidebar:
     st.metric("Target", "85-90%")
     st.metric("Proven", "100%")
 
-# MAIN HEADER
+# MAIN HEADER - DARK BACKGROUND WITH WHITE TEXT
 st.markdown(f"""
-<div style="display:flex;align-items:center;gap:15px;margin-bottom:5px;">
-    <img src="{LOGO_URL}" width="90" style="vertical-align:middle;">
-    <h1 style="margin:0;font-size:2.2rem;color:#1a237e;">Churchgate Bank Reconciliation</h1>
+<div class="header-container">
+    <img src="{LOGO_URL}" alt="Churchgate Logo">
+    <div>
+        <h1>Churchgate Bank Reconciliation</h1>
+        <h4>Churchgate Group — Finance Department</h4>
+    </div>
 </div>
-<h4 style="margin-top:0;color:#666;margin-left:105px;">Churchgate Group — Finance Department</h4>
 """, unsafe_allow_html=True)
 
 st.markdown("---")
