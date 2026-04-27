@@ -170,7 +170,7 @@ def generate_erp_csv(result_df, voucher_df):
 
 # SIDEBAR
 with st.sidebar:
-    st.image("churchgate_logo.png", width=200)
+    st.image("churchgate_logo.png", width=180)
     st.title("Churchgate Group")
     st.markdown("### Bank Reconciliation")
     st.markdown("---")
@@ -182,13 +182,13 @@ with st.sidebar:
     st.metric("Target", "85-90%")
     st.metric("Proven", "100%")
 
-# MAIN HEADER - LOGO + TITLE INLINE
+# MAIN HEADER
 st.markdown("""
-<div style="display: flex; align-items: center; gap: 25px; margin-bottom: 5px; padding: 10px 0;">
-    <img src="https://raw.githubusercontent.com/eetuk-churchgate/churchgate-reconciliation/main/churchgate_logo.png" width="130" style="vertical-align: middle;">
-    <h1 style="margin: 0; padding: 0; font-size: 2.4rem; font-weight: 700; color: #1a237e;">Churchgate Bank Reconciliation</h1>
-</div>
-<h4 style="margin-top: 0; color: #666; padding-left: 155px;">Churchgate Group — Finance Department</h4>
+<table><tr>
+<td><img src="churchgate_logo.png" width="100"></td>
+<td><h1 style="margin:0;font-size:2.2rem;color:#1a237e;">&nbsp;&nbsp;Churchgate Bank Reconciliation</h1></td>
+</tr></table>
+<h4 style="margin-top:0;color:#666;margin-left:10px;">Churchgate Group — Finance Department</h4>
 """, unsafe_allow_html=True)
 
 st.markdown("---")
