@@ -1,6 +1,6 @@
 """
 ╔══════════════════════════════════════════════════════════════════╗
-║  CHURCHGATE MULTI-FORMAT RECONCILIATION DASHBOARD v3.0          ║
+║  CHURCHGATE BANK RECONCILIATION DASHBOARD v3.0                  ║
 ║  Supports: Excel + PDF (Digital) + PDF (Scanned/OCR)            ║
 ║  NEW: ERP Export with Auto-Filled Account Codes                  ║
 ║  Upload bank file + optional voucher file                       ║
@@ -19,7 +19,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 st.set_page_config(
-    page_title="Churchgate Multi-Format Reconciliation",
+    page_title="Churchgate Bank Reconciliation",
     page_icon="🏦",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -230,7 +230,7 @@ def generate_erp_csv(result_df, voucher_df):
 # ============================================================
 with st.sidebar:
     st.title("🏦 Churchgate Group")
-    st.markdown("### Multi-Format Reconciliation")
+    st.markdown("### Bank Reconciliation")
     st.markdown("---")
     st.markdown("### 📂 Upload Bank Statement")
     bank_file = st.file_uploader("Bank Statement", type=['xls','xlsx','pdf'], help="Excel or PDF bank statement", key="bank")
@@ -238,18 +238,18 @@ with st.sidebar:
     voucher_file = st.file_uploader("Voucher Ledger (Excel only)", type=['xls','xlsx'], help="Required for full reconciliation", key="voucher")
     st.markdown("---")
     st.metric("Automation Target", "85-90%")
-    st.metric("Excel Proven Rate", "100%")
+    st.metric("Proven Rate", "100%")
     st.markdown("---")
     st.markdown("### 📥 Formats")
     st.markdown("✅ Excel (.xls/.xlsx)")
     st.markdown("✅ Digital PDF")
     st.markdown("⚠️ Scanned PDF (OCR)")
-    st.caption(f"v3.0 ERP-Ready Multi-Format | {datetime.now().year}")
+    st.caption(f"v3.0 ERP-Ready | {datetime.now().year}")
 
 # ============================================================
 # MAIN CONTENT
 # ============================================================
-st.title("🏦 Multi-Format Bank Reconciliation")
+st.title("🏦 Churchgate Bank Reconciliation")
 st.markdown("### Churchgate Group — Finance Department")
 
 if not bank_file:
@@ -415,4 +415,4 @@ else:
             st.dataframe(disp, use_container_width=True, hide_index=True)
 
 st.markdown("---")
-st.caption(f"Churchgate Group — Multi-Format Reconciliation v3.0 ERP-Ready | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+st.caption(f"Churchgate Group — Bank Reconciliation System v3.0 ERP-Ready | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
