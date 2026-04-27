@@ -1,6 +1,6 @@
 """
 ╔══════════════════════════════════════════════════════════════════╗
-║  CHURCHGATE BANK RECONCILIATION DASHBOARD v3.1                  ║
+║  CHURCHGATE BANK RECONCILIATION DASHBOARD v3.0                  ║
 ║  Supports: Excel + PDF (Digital) + PDF (Scanned/OCR)            ║
 ║  ERP Export with Auto-Filled Account Codes                       ║
 ╚══════════════════════════════════════════════════════════════════╝
@@ -205,28 +205,31 @@ def generate_erp_csv(result_df, voucher_df):
 # SIDEBAR WITH LOGO
 # ============================================================
 with st.sidebar:
-    col1, col2, col3 = st.columns([0.5, 3, 0.5])
-    with col2:
-        st.image("churchgate_logo.png", width=220)
-    st.markdown("""
-    <h2 style='text-align: center; color: #1a237e; margin-bottom: 0;'>Churchgate Group</h2>
-    <p style='text-align: center; color: #333; font-weight: 600; margin-top: 0;'>Bank Reconciliation</p>
-    """, unsafe_allow_html=True)
+    st.image("churchgate_logo.png", width=200)
+    st.title("Churchgate Group")
+    st.markdown("### Bank Reconciliation")
     st.markdown("---")
     st.markdown("### 📂 Upload Bank Statement")
     bank_file = st.file_uploader("Bank Statement", type=['xls','xlsx','pdf'], help="Excel or PDF bank statement", key="bank")
     st.markdown("### 📋 Upload Voucher Ledger (Optional)")
     voucher_file = st.file_uploader("Voucher Ledger (Excel only)", type=['xls','xlsx'], help="Required for full reconciliation", key="voucher")
     st.markdown("---")
-    col_a, col_b = st.columns(2)
-    with col_a: st.metric("Target", "85-90%")
-    with col_b: st.metric("Proven", "100%")
+    st.metric("Automation Target", "85-90%")
+    st.metric("Proven Rate", "100%")
     st.markdown("---")
-    st.caption(f"v3.1 ERP-Ready | {datetime.now().year}")
+    st.markdown("### 📥 Formats")
+    st.markdown("✅ Excel (.xls/.xlsx)")
+    st.markdown("✅ Digital PDF")
+    st.markdown("⚠️ Scanned PDF (OCR)")
+    st.caption(f"v3.0 ERP-Ready | {datetime.now().year}")
 
 # ============================================================
-# MAIN CONTENT
+# MAIN CONTENT - LOGO CENTERED AT TOP
 # ============================================================
+col_logo1, col_logo2, col_logo3 = st.columns([1, 1, 1])
+with col_logo2:
+    st.image("churchgate_logo.png", width=250)
+
 st.title("🏦 Churchgate Bank Reconciliation")
 st.markdown("### Churchgate Group — Finance Department")
 
@@ -273,15 +276,15 @@ else:
                 for c in ['Debit','Credit']: voucher_df[c] = voucher_df[c].apply(clean_number)
                 voucher_df['Amount'] = voucher_df['Debit'] - voucher_df['Credit']
                 voucher_df['Amount_Abs'] = abs(voucher_df['Amount'])
-                st.success("✅ Voucher ledger loaded")
-            except: st.info("ℹ️ No voucher sheet found")
+                st.success("✅ Voucher ledger loaded from Excel")
+            except: st.info("ℹ️ No voucher sheet in Excel.")
         elif file_ext == '.pdf' and HAS_PDFPLUMBER:
             bank_df = extract_from_pdf(bank_bytes, bank_file.name)
             if len(bank_df) > 0:
                 bank_df['Amount'] = bank_df['Lodgment'] - bank_df['Withdrawals']
                 bank_df['Amount_Abs'] = abs(bank_df['Amount'])
                 st.success(f"✅ Extracted {len(bank_df)} transactions from PDF")
-            else: st.warning("⚠️ Few transactions found")
+            else: st.warning("⚠️ Few transactions found.")
         if voucher_file and voucher_df is None:
             try:
                 voucher_df = load_voucher(voucher_file.getbuffer())
@@ -355,12 +358,12 @@ else:
                 st.subheader("📥 Export Reports")
                 col_btn1, col_btn2 = st.columns(2)
                 with col_btn1:
-                    if st.button("📊 Download Reconciliation Report", type="primary"):
+                    if st.button("📊 Download Full Reconciliation Report", type="primary"):
                         with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
                             with pd.ExcelWriter(tmp.name, engine='xlsxwriter') as w:
                                 result_df.to_excel(w, sheet_name='Reconciliation', index=False)
                             with open(tmp.name, 'rb') as f:
-                                st.download_button("📥 Download Report", f, file_name=f"Recon_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
+                                st.download_button("📥 Download Report", f, file_name=f"Recon_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
                         st.success("✅ Ready!")
                 with col_btn2:
                     if st.button("📁 Download ERP Import CSV", type="primary"):
@@ -376,7 +379,7 @@ else:
             c1.metric("Transactions", len(bank_df))
             c2.metric("Total Debits", f"₦{td:,.2f}")
             c3.metric("Total Credits", f"₦{tc:,.2f}")
-            st.info("### ⚠️ No Voucher Found\nUpload a Voucher Excel in the sidebar for full reconciliation.")
+            st.info("### ⚠️ No Voucher Found — Showing Extraction Only\nUpload a Voucher Excel in the sidebar for full reconciliation.")
             disp = bank_df.copy()
             if 'Transaction_Date' in disp.columns: disp['Transaction_Date'] = disp['Transaction_Date'].dt.strftime('%d-%b-%Y')
             for c in ['Withdrawals','Lodgment']:
@@ -384,4 +387,4 @@ else:
             st.dataframe(disp, use_container_width=True, hide_index=True)
 
 st.markdown("---")
-st.caption(f"Churchgate Group — Bank Reconciliation System v3.1 ERP-Ready | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+st.caption(f"Churchgate Group — Bank Reconciliation System v3.0 ERP-Ready | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
