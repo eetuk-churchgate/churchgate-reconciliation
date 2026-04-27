@@ -224,13 +224,14 @@ with st.sidebar:
     st.caption(f"v3.0 ERP-Ready | {datetime.now().year}")
 
 # ============================================================
-# MAIN CONTENT - LOGO CENTERED AT TOP
+# MAIN CONTENT - LOGO + TITLE SIDE BY SIDE
 # ============================================================
-col_logo1, col_logo2, col_logo3 = st.columns([1, 1, 1])
-with col_logo2:
-    st.image("churchgate_logo.png", width=250)
+col_title1, col_title2 = st.columns([0.5, 5])
+with col_title1:
+    st.image("churchgate_logo.png", width=80)
+with col_title2:
+    st.title("Churchgate Bank Reconciliation")
 
-st.title("🏦 Churchgate Bank Reconciliation")
 st.markdown("### Churchgate Group — Finance Department")
 
 if not bank_file:
