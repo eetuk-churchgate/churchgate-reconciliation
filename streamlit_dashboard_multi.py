@@ -229,7 +229,8 @@ def generate_erp_csv(result_df, voucher_df):
 # SIDEBAR
 # ============================================================
 with st.sidebar:
-    st.title("🏦 Churchgate Group")
+    st.image("churchgate_logo.png", width=180)
+    st.title("Churchgate Group")
     st.markdown("### Bank Reconciliation")
     st.markdown("---")
     st.markdown("### 📂 Upload Bank Statement")
