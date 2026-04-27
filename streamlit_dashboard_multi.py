@@ -21,11 +21,11 @@ LOGO_URL = "https://raw.githubusercontent.com/eetuk-churchgate/churchgate-reconc
 
 st.set_page_config(page_title="Churchgate Bank Reconciliation", page_icon="🏦", layout="wide")
 
-# Custom CSS for dark header background and readable text
+# Custom CSS for grey header background with white text
 st.markdown("""
 <style>
 .header-container {
-    background: linear-gradient(135deg, #1a237e 0%, #283593 100%);
+    background: linear-gradient(135deg, #37474f 0%, #455a64 100%);
     border-radius: 12px;
     padding: 20px 25px;
     margin-bottom: 15px;
@@ -45,7 +45,7 @@ st.markdown("""
     font-weight: 700;
 }
 .header-container h4 {
-    color: #bbdefb !important;
+    color: #b0bec5 !important;
     margin: 5px 0 0 0;
     font-weight: 400;
 }
@@ -222,7 +222,7 @@ with st.sidebar:
     st.metric("Target", "85-90%")
     st.metric("Proven", "100%")
 
-# MAIN HEADER - DARK BACKGROUND WITH WHITE TEXT
+# MAIN HEADER - GREY BACKGROUND WITH WHITE TEXT
 st.markdown(f"""
 <div class="header-container">
     <img src="{LOGO_URL}" alt="Churchgate Logo">
