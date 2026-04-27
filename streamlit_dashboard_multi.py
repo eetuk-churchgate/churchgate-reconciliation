@@ -184,11 +184,11 @@ with st.sidebar:
 
 # MAIN HEADER - LOGO + TITLE INLINE
 st.markdown("""
-<div style="display: flex; align-items: center; gap: 15px; margin-bottom: 5px;">
-    <img src="https://raw.githubusercontent.com/eetuk-churchgate/churchgate-reconciliation/main/churchgate_logo.png" width="70">
-    <h1 style="margin: 0; padding: 0; font-size: 2.2rem;">Churchgate Bank Reconciliation</h1>
+<div style="display: flex; align-items: center; gap: 25px; margin-bottom: 5px; padding: 10px 0;">
+    <img src="https://raw.githubusercontent.com/eetuk-churchgate/churchgate-reconciliation/main/churchgate_logo.png" width="130" style="vertical-align: middle;">
+    <h1 style="margin: 0; padding: 0; font-size: 2.4rem; font-weight: 700; color: #1a237e;">Churchgate Bank Reconciliation</h1>
 </div>
-<h4 style="margin-top: 0; color: #666;">Churchgate Group — Finance Department</h4>
+<h4 style="margin-top: 0; color: #666; padding-left: 155px;">Churchgate Group — Finance Department</h4>
 """, unsafe_allow_html=True)
 
 st.markdown("---")
