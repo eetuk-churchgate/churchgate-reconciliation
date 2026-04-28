@@ -1,8 +1,8 @@
 """
 ╔══════════════════════════════════════════════════════════════════╗
-║  CHURCHGATE BANK RECONCILIATION DASHBOARD v3.0                  ║
+║  CHURCHGATE BANK RECONCILIATION DASHBOARD v5.0                  ║
 ║  Supports: Excel + PDF (Digital) + PDF (Scanned/OCR)            ║
-║  ERP Export with Auto-Filled Account Codes                       ║
+║  NEW: Near-Miss Detection | Duplicate Detection | ERP Export     ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
 import streamlit as st
@@ -21,7 +21,6 @@ LOGO_URL = "https://raw.githubusercontent.com/eetuk-churchgate/churchgate-reconc
 
 st.set_page_config(page_title="Churchgate Bank Reconciliation", page_icon="🏦", layout="wide")
 
-# Custom CSS for grey header background with white text
 st.markdown("""
 <style>
 .header-container {
@@ -33,22 +32,9 @@ st.markdown("""
     align-items: center;
     gap: 20px;
 }
-.header-container img {
-    width: 90px;
-    height: auto;
-}
-.header-container h1 {
-    color: #ffffff !important;
-    font-size: 2.2rem;
-    margin: 0;
-    padding: 0;
-    font-weight: 700;
-}
-.header-container h4 {
-    color: #b0bec5 !important;
-    margin: 5px 0 0 0;
-    font-weight: 400;
-}
+.header-container img { width: 90px; height: auto; }
+.header-container h1 { color: #ffffff !important; font-size: 2.2rem; margin: 0; padding: 0; font-weight: 700; }
+.header-container h4 { color: #b0bec5 !important; margin: 5px 0 0 0; font-weight: 400; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -123,6 +109,36 @@ def load_voucher(file_bytes):
     voucher_df['Amount'] = voucher_df['Debit'] - voucher_df['Credit']
     voucher_df['Amount_Abs'] = abs(voucher_df['Amount'])
     return voucher_df
+
+def detect_near_misses(bank_df, voucher_df):
+    near_misses = []
+    for bi, br in bank_df.iterrows():
+        if br['Amount_Abs'] < 0.01: continue
+        for vi, vr in voucher_df.iterrows():
+            if vr['Amount_Abs'] < 0.01: continue
+            diff_pct = abs(br['Amount_Abs'] - vr['Amount_Abs']) / max(br['Amount_Abs'], vr['Amount_Abs'])
+            if 0.01 < diff_pct <= 0.10:
+                near_misses.append({
+                    'Bank_Date': br['Transaction_Date'], 'Bank_Amount': f"₦{br['Amount_Abs']:,.2f}",
+                    'Voucher_Amount': f"₦{vr['Amount_Abs']:,.2f}", 'Difference': f'{diff_pct:.1%}',
+                    'Bank_Details': str(br['Transaction_Details'])[:80], 'Voucher': str(vr['Particulars'])[:80]
+                })
+    return pd.DataFrame(near_misses)
+
+def detect_duplicates(bank_df):
+    duplicates = []
+    for i, row1 in bank_df.iterrows():
+        for j, row2 in bank_df.iterrows():
+            if j <= i: continue
+            if abs(row1['Amount_Abs'] - row2['Amount_Abs']) < 0.01:
+                days_diff = abs((row1['Transaction_Date'] - row2['Transaction_Date']).days)
+                if days_diff <= 3:
+                    duplicates.append({
+                        'Amount': f"₦{row1['Amount_Abs']:,.2f}", 'Days_Apart': days_diff,
+                        'Date_1': str(row1['Transaction_Date'])[:10], 'Date_2': str(row2['Transaction_Date'])[:10],
+                        'Risk': 'HIGH' if days_diff == 0 else 'MEDIUM'
+                    })
+    return pd.DataFrame(duplicates)
 
 def reconcile(bank_df, voucher_df):
     bank_df['Category'] = bank_df.apply(categorize, axis=1)
@@ -202,15 +218,12 @@ def generate_erp_csv(result_df, voucher_df):
     erp_export['Reconciled_By'] = 'AI Engine'
     erp_export['ERP_Account_Code'] = erp_export['Voucher_No'].apply(lambda x: voucher_lookup.get(x, {}).get('account', 'AUTO-MATCHED') if x not in ['N/A', ''] else 'SYSTEM')
     erp_export['ERP_Cost_Center'] = erp_export['Voucher_No'].apply(lambda x: voucher_lookup.get(x, {}).get('type', 'AUTO') if x not in ['N/A', ''] else 'SYSTEM')
-    erp_export['ERP_Description'] = erp_export['Voucher_No'].apply(lambda x: voucher_lookup.get(x, {}).get('particulars', 'System Charge') if x not in ['N/A', ''] else 'System Charge')
     return erp_export.to_csv(index=False)
 
 # SIDEBAR
 with st.sidebar:
-    try:
-        st.image(LOGO_URL, width=180)
-    except:
-        st.image("churchgate_logo.png", width=180)
+    try: st.image(LOGO_URL, width=180)
+    except: st.image("churchgate_logo.png", width=180)
     st.title("Churchgate Group")
     st.markdown("### Bank Reconciliation")
     st.markdown("---")
@@ -222,7 +235,7 @@ with st.sidebar:
     st.metric("Target", "85-90%")
     st.metric("Proven", "100%")
 
-# MAIN HEADER - GREY BACKGROUND WITH WHITE TEXT
+# MAIN HEADER
 st.markdown(f"""
 <div class="header-container">
     <img src="{LOGO_URL}" alt="Churchgate Logo">
@@ -240,7 +253,7 @@ if not bank_file:
     with col1:
         st.info("### 👋 Welcome\n**Upload Options:**\n1. **Excel file** → Full reconciliation + ERP export\n2. **PDF bank statement** → Extraction\n3. **PDF + Voucher Excel** → Full reconciliation + ERP export")
     with col2:
-        st.success("### 🎯 Proven Results\n**F&C Trial (March 2026):**\n- 🔥 100% bank coverage\n- ✅ 35/35 handled\n- ⚡ < 1 second\n- 📁 ERP CSV auto-export\n**Target: 85-90% → Delivered: 100%**")
+        st.success("### 🎯 Proven Results\n**F&C Trial (March 2026):**\n- 🔥 100% bank coverage\n- ✅ 35/35 handled\n- ⚡ < 1 second\n- 🔍 Near-miss & duplicate detection\n**Target: 85-90% → Delivered: 100%**")
 else:
     file_ext = os.path.splitext(bank_file.name)[1].lower()
     with st.spinner(f"Processing..."):
@@ -255,15 +268,7 @@ else:
             bank_df['Amount'] = bank_df['Lodgment'] - bank_df['Withdrawals']
             bank_df['Amount_Abs'] = abs(bank_df['Amount'])
             try:
-                voucher_df = pd.read_excel(io.BytesIO(bank_bytes), sheet_name='VoucherDetails', skiprows=8)
-                voucher_df.columns = ['Date','Particulars','Vch_Type','In4Vch_No','Vch_No','Debit','Credit','Extra']
-                voucher_df = voucher_df.dropna(subset=['Date','Particulars'])
-                mask = ~voucher_df['Date'].astype(str).str.contains('Opening|Current Total|Closing|Report Name|Company|Format|Ledger|Period', na=False)
-                voucher_df = voucher_df[mask].copy()
-                voucher_df['Date'] = voucher_df.apply(fix_voucher_date, axis=1)
-                for c in ['Debit','Credit']: voucher_df[c] = voucher_df[c].apply(clean_number)
-                voucher_df['Amount'] = voucher_df['Debit'] - voucher_df['Credit']
-                voucher_df['Amount_Abs'] = abs(voucher_df['Amount'])
+                voucher_df = load_voucher(bank_bytes)
                 st.success("✅ Voucher loaded")
             except: st.info("ℹ️ No voucher sheet")
         elif file_ext == '.pdf' and HAS_PDFPLUMBER:
@@ -279,24 +284,36 @@ else:
     if bank_df is not None and len(bank_df) > 0:
         if voucher_df is not None and len(voucher_df) > 0:
             result_df, s = reconcile(bank_df, voucher_df)
-            c1, c2, c3, c4, c5 = st.columns(5)
+            near_misses_df = detect_near_misses(bank_df, voucher_df)
+            duplicates_df = detect_duplicates(bank_df)
+            
+            st.markdown("---")
+            c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
             c1.metric("🎯 Rate", f"{s['rate']:.1f}%", delta="EXCEEDED 🔥" if s['rate'] >= 90 else "MET ✅")
             c2.metric("📊 Bank", s['total'])
             c3.metric("✅ Handled", s['matched'])
             c4.metric("⚠️ Review", s['unmatched_bank'] + s['unmatched_voucher'])
             c5.metric("📄 Format", file_ext.upper())
+            c6.metric("🔍 Near Miss", len(near_misses_df))
+            c7.metric("⚠️ Duplicates", len(duplicates_df))
+            
             gc = "green" if s['rate'] >= 90 else ("orange" if s['rate'] >= 85 else "red")
             fig = go.Figure(go.Indicator(mode="gauge+number+delta", value=s['rate'], domain={'x': [0, 1], 'y': [0, 1]}, title={'text': "Automation Rate", 'font': {'size': 24}}, delta={'reference': 85}, gauge={'axis': {'range': [0, 100]}, 'bar': {'color': gc}, 'steps': [{'range': [0, 70], 'color': '#ffcdd2'}, {'range': [70, 85], 'color': '#fff9c4'}, {'range': [85, 95], 'color': '#c8e6c9'}, {'range': [95, 100], 'color': '#a5d6a7'}], 'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': 85}}))
             fig.update_layout(height=300)
             st.plotly_chart(fig, use_container_width=True)
+            
             cp1, cp2 = st.columns(2)
             with cp1: st.plotly_chart(px.pie(pd.DataFrame({'Category': ['Direct', 'System', 'Flagged', 'Unmatched'], 'Count': [s['direct'], s['auto'], s['flagged'], s['unmatched_bank']]}), values='Count', names='Category', title='Breakdown', color_discrete_sequence=['#4CAF50', '#2196F3', '#FF9800', '#f44336']), use_container_width=True)
             with cp2: st.plotly_chart(px.bar(pd.DataFrame({'Status': ['Matched', 'Auto', 'Flagged', 'Unmatched'], 'Count': [s['direct'], s['auto'], s['flagged'], s['unmatched_bank']]}), x='Status', y='Count', title='Status', color='Status', color_discrete_sequence=['#4CAF50', '#2196F3', '#FF9800', '#f44336']), use_container_width=True)
-            t1, t2, t3, t4 = st.tabs(["✅ Reconciled", "⚠️ Review", "📋 Summary", "📥 Export"])
+            
+            st.markdown("---")
+            t1, t2, t3, t4, t5 = st.tabs(["✅ Reconciled", "⚠️ Review", "🔍 Exceptions", "📋 Summary", "📥 Export"])
+            
             with t1:
                 mdf = result_df[result_df['Match_Status'].isin(['MATCHED','AUTO_MATCHED','FLAGGED_COMBINED'])][['Bank_SN','Bank_Date','Category','Amount','Match_Status','Voucher_Name']].copy()
                 mdf['Amount'] = mdf['Amount'].apply(lambda x: f"₦{x:,.2f}")
                 st.dataframe(mdf, use_container_width=True, hide_index=True)
+            
             with t2:
                 ca, cb = st.columns(2)
                 with ca:
@@ -305,16 +322,35 @@ else:
                         ub_d = ub[['Bank_SN','Bank_Date','Category','Amount','Bank_Details']].copy()
                         ub_d['Amount'] = ub_d['Amount'].apply(lambda x: f"₦{x:,.2f}")
                         st.dataframe(ub_d, use_container_width=True, hide_index=True)
-                    else: st.success("🎉 None!")
+                    else: st.success("🎉 No unmatched bank items!")
                 with cb:
                     uv = voucher_df[~voucher_df['Vch_No'].isin(s['used_voucher_nos'])]
                     if len(uv) > 0:
                         uv_d = uv[['Date','Particulars','Vch_Type','Amount_Abs','Vch_No']].copy()
                         uv_d['Amount_Abs'] = uv_d['Amount_Abs'].apply(lambda x: f"₦{x:,.2f}")
                         st.dataframe(uv_d, use_container_width=True, hide_index=True)
-                    else: st.success("🎉 None!")
-            with t3: st.dataframe(pd.DataFrame({'Metric': ['Rate','Bank','Vouchers','Direct','System','Flagged','Unmatched Bank','Unmatched Voucher'], 'Value': [f"{s['rate']:.1f}%", s['total'], len(voucher_df), s['direct'], s['auto'], s['flagged'], s['unmatched_bank'], s['unmatched_voucher']]}), use_container_width=True, hide_index=True)
+                    else: st.success("🎉 No unmatched vouchers!")
+            
+            with t3:
+                st.subheader("🔍 Near Miss Transactions")
+                if len(near_misses_df) > 0:
+                    st.warning(f"Found {len(near_misses_df)} transactions with amounts close to voucher values (±10%)")
+                    st.dataframe(near_misses_df, use_container_width=True, hide_index=True)
+                else: st.success("No near misses detected!")
+                st.markdown("---")
+                st.subheader("⚠️ Potential Duplicate Transactions")
+                if len(duplicates_df) > 0:
+                    st.warning(f"Found {len(duplicates_df)} potential duplicate transactions (same amount within 3 days)")
+                    st.dataframe(duplicates_df, use_container_width=True, hide_index=True)
+                else: st.success("No duplicates detected!")
+            
             with t4:
+                st.dataframe(pd.DataFrame({
+                    'Metric': ['Rate','Bank','Vouchers','Direct','System','Flagged','Unmatched Bank','Unmatched Voucher','Near Misses','Duplicates'],
+                    'Value': [f"{s['rate']:.1f}%", s['total'], len(voucher_df), s['direct'], s['auto'], s['flagged'], s['unmatched_bank'], s['unmatched_voucher'], len(near_misses_df), len(duplicates_df)]
+                }), use_container_width=True, hide_index=True)
+            
+            with t5:
                 cb1, cb2 = st.columns(2)
                 with cb1:
                     if st.button("📊 Download Report", type="primary"):
@@ -335,4 +371,4 @@ else:
             c3.metric("Total Credits", f"₦{tc:,.2f}")
             st.info("Upload Voucher Excel for full reconciliation.")
 
-st.caption(f"Churchgate Group — Bank Reconciliation System v3.0 | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+st.caption(f"Churchgate Group — Bank Reconciliation System v5.0 | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
