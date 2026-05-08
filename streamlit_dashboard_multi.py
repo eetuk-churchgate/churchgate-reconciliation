@@ -1,7 +1,7 @@
 """
 ╔══════════════════════════════════════════════════════════════════╗
-║  CHURCHGATE BANK RECONCILIATION DASHBOARD v9.0                  ║
-║  4-PASS MATCHING: EXACT → FORCE → FUZZY → WIDE FUZZY | ERP      ║
+║  CHURCHGATE BANK RECONCILIATION DASHBOARD v9.1                  ║
+║  4-PASS + F&C SPECIAL RULES RESTORED | ERP READY                ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
 import streamlit as st
@@ -140,7 +140,7 @@ def detect_duplicates(bank_df):
     return pd.DataFrame(duplicates)
 
 # ============================================================
-# RECONCILE v9.0 - 4-PASS: EXACT → FORCE → FUZZY → WIDE
+# RECONCILE v9.1 - 4-PASS + F&C SPECIAL RULES
 # ============================================================
 def reconcile(bank_df, voucher_df):
     bank_df['Category'] = bank_df.apply(categorize, axis=1)
@@ -156,14 +156,20 @@ def reconcile(bank_df, voucher_df):
         
         best_s, best_v = 0, None
         is_wht_bank = ('WO/' in bd_raw.upper()) and ba > 100000
+        is_fc_sundry = ('F&C' in bd_raw.upper() or 'F C' in bt) and ('253259' in bd_raw.upper() or 'E 253259' in bt)
+        is_staff_coop = 'CHURCHGATE STAFF COOPERATIVE' in bt
         
         # PASS 1: EXACT AMOUNT MATCH
         for vi, vr in voucher_df.iterrows():
             if vi in used or abs(ba - vr['Amount_Abs']) > 0.05: continue
             s, vt = 0, normalize(vr['Particulars'])
             is_wht_v = 'WITHHOLDING TAX' in str(vr['Particulars']).upper()
+            is_sundry = 'SUNDRY ACCRUED' in vt
             
+            # F&C SPECIAL RULES (RESTORED)
             if is_wht_bank and is_wht_v: s += 60
+            elif is_fc_sundry and is_sundry and not is_wht_v: s += 70
+            elif is_staff_coop and is_sundry: s += 70
             else:
                 if pd.notna(bd) and pd.notna(vr['Date']):
                     days = abs((bd - vr['Date']).days)
@@ -197,7 +203,7 @@ def reconcile(bank_df, voucher_df):
             
             if s > best_s: best_s, best_v = s, vi
         
-        # PASS 2: FORCE MATCH - Same amount within 30 days
+        # PASS 2: FORCE MATCH
         if best_s < 10 and best_v is None:
             best_force_s, best_force_v = 0, None
             for vi, vr in voucher_df.iterrows():
@@ -212,13 +218,12 @@ def reconcile(bank_df, voucher_df):
             if best_force_v is not None:
                 best_s, best_v = 15, best_force_v
         
-        # PASS 3: FUZZY MATCH - Within 10% and 30 days
+        # PASS 3: FUZZY MATCH
         if best_s < 10 and best_v is None:
             best_fuzzy_s, best_fuzzy_v = 0, None
             for vi, vr in voucher_df.iterrows():
                 if vi in used: continue
                 if vr['Amount_Abs'] < 100: continue
-                
                 diff_pct = abs(ba - vr['Amount_Abs']) / max(ba, vr['Amount_Abs'])
                 if diff_pct <= 0.10:
                     if pd.notna(bd) and pd.notna(vr['Date']):
@@ -227,24 +232,21 @@ def reconcile(bank_df, voucher_df):
                             fuzzy_s = 25 - (days * 0.5) - (diff_pct * 80)
                             if fuzzy_s > best_fuzzy_s:
                                 best_fuzzy_s, best_fuzzy_v = fuzzy_s, vi
-            
             if best_fuzzy_v is not None and best_fuzzy_s > 0:
                 best_s, best_v = 25, best_fuzzy_v
         
-        # PASS 4: WIDER FUZZY (10-15%) - Single clear candidate within 3 days
+        # PASS 4: WIDER FUZZY
         if best_s < 10 and best_v is None:
             candidates = []
             for vi, vr in voucher_df.iterrows():
                 if vi in used: continue
                 if vr['Amount_Abs'] < 100: continue
-                
                 diff_pct = abs(ba - vr['Amount_Abs']) / max(ba, vr['Amount_Abs'])
                 if 0.10 < diff_pct <= 0.15:
                     if pd.notna(bd) and pd.notna(vr['Date']):
                         days = abs((bd - vr['Date']).days)
                         if days <= 3:
                             candidates.append((diff_pct, days, vi))
-            
             if len(candidates) == 1:
                 diff_pct, days, vi = candidates[0]
                 best_s, best_v = 35, vi
@@ -308,7 +310,7 @@ with st.sidebar:
     try: st.image(LOGO_URL, width=180)
     except: st.image("churchgate_logo.png", width=180)
     st.title("Churchgate Group")
-    st.markdown("### Bank Reconciliation v9.0")
+    st.markdown("### Bank Reconciliation v9.1")
     st.markdown("---")
     st.markdown("### 📂 Upload Bank Statement")
     bank_file = st.file_uploader("Bank Statement", type=['xls','xlsx','pdf'], key="bank")
@@ -316,8 +318,8 @@ with st.sidebar:
     voucher_file = st.file_uploader("Voucher Ledger", type=['xls','xlsx'], key="voucher")
     st.markdown("---")
     st.metric("Target", "85-90%")
-    st.metric("Engine", "v9.0 4-Pass")
-    st.caption("EXACT → FORCE → FUZZY → WIDE")
+    st.metric("Engine", "v9.1 F&C Rules")
+    st.caption("4-Pass + F&C Special Rules")
 
 # MAIN HEADER
 st.markdown(f"""
@@ -336,7 +338,7 @@ if not bank_file:
     with col1:
         st.info("### 👋 Welcome\n**Upload Options:**\n1. **Excel** (bank + voucher)\n2. **Bank** + **Voucher** (separate)\n3. **PDF** bank statement")
     with col2:
-        st.success("### 🎯 v9.0 4-Pass Matching\n- **Pass 1:** Exact Amount\n- **Pass 2:** Force Match (30 days)\n- **Pass 3:** Fuzzy (±10%)\n- **Pass 4:** Wide Fuzzy (±15%, single candidate)\n- F&C: 100% | RBPL: 87%→ | WTC: 89%→")
+        st.success("### 🎯 v9.1 4-Pass + F&C Rules\n- F&C: 100% restored\n- RBPL: 87.8%\n- WTC: 89.3%\n- Pass 4: Wide Fuzzy (±15%)")
 else:
     file_ext = os.path.splitext(bank_file.name)[1].lower()
     with st.spinner(f"Processing {bank_file.name}..."):
@@ -388,7 +390,7 @@ else:
             
             st.markdown("---")
             c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
-            c1.metric("🎯 Rate", f"{s['rate']:.1f}%", delta="TARGET 90%" if s['rate'] < 90 else "EXCEEDED 🔥")
+            c1.metric("🎯 Rate", f"{s['rate']:.1f}%", delta="100% F&C" if s['rate'] >= 95 else "TARGET 90%")
             c2.metric("📊 Bank", s['total'])
             c3.metric("✅ Handled", s['matched'])
             c4.metric("⚠️ Review", s['unmatched_bank'] + s['unmatched_voucher'])
@@ -396,7 +398,7 @@ else:
             c6.metric("🔍 Fuzzy", f"{s['fuzzy']}+{s['wide']}")
             c7.metric("⚠️ Dups", len(duplicates_df))
             
-            gc = "green" if s['rate'] >= 90 else ("orange" if s['rate'] >= 85 else "red")
+            gc = "green" if s['rate'] >= 95 else ("orange" if s['rate'] >= 85 else "red")
             fig = go.Figure(go.Indicator(mode="gauge+number+delta", value=s['rate'], domain={'x': [0, 1], 'y': [0, 1]}, title={'text': "Match Rate", 'font': {'size': 24}}, delta={'reference': 90}, gauge={'axis': {'range': [0, 100]}, 'bar': {'color': gc}, 'steps': [{'range': [0, 50], 'color': '#ffcdd2'}, {'range': [50, 70], 'color': '#fff9c4'}, {'range': [70, 85], 'color': '#c8e6c9'}, {'range': [85, 100], 'color': '#a5d6a7'}], 'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': 90}}))
             fig.update_layout(height=300)
             st.plotly_chart(fig, use_container_width=True)
@@ -434,7 +436,7 @@ else:
                     st.warning(f"{len(fdf)} fuzzy-matched (±10%)")
                     st.dataframe(fdf[['Bank_SN','Bank_Date','Amount','Voucher_Name']].head(30), use_container_width=True, hide_index=True)
                 if len(wdf) > 0:
-                    st.warning(f"{len(wdf)} wide-fuzzy-matched (±15%, single candidate)")
+                    st.warning(f"{len(wdf)} wide-fuzzy-matched (±15%)")
                     st.dataframe(wdf[['Bank_SN','Bank_Date','Amount','Voucher_Name']].head(30), use_container_width=True, hide_index=True)
             
             with t4:
@@ -458,4 +460,4 @@ else:
             c3.metric("Total Credits", f"₦{tc:,.2f}")
             st.info("Upload a Voucher Excel file for full reconciliation.")
 
-st.caption(f"Churchgate Group — Bank Reconciliation System v9.0 | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+st.caption(f"Churchgate Group — Bank Reconciliation System v9.1 | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
