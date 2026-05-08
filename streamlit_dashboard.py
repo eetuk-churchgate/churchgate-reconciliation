@@ -1,8 +1,8 @@
 """
 ╔══════════════════════════════════════════════════════════════════╗
-║  CHURCHGATE BANK RECONCILIATION DASHBOARD v5.0                  ║
-║  Supports: Excel + PDF (Digital) + PDF (Scanned/OCR)            ║
-║  NEW: Near-Miss Detection | Duplicate Detection | ERP Export     ║
+║  CHURCHGATE BANK RECONCILIATION DASHBOARD v5.1                  ║
+║  Supports: Excel + PDF + Separate Voucher Files                 ║
+║  Auto-detects sheet names | Near-Miss + Duplicate Detection     ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
 import streamlit as st
@@ -25,12 +25,8 @@ st.markdown("""
 <style>
 .header-container {
     background: linear-gradient(135deg, #37474f 0%, #455a64 100%);
-    border-radius: 12px;
-    padding: 20px 25px;
-    margin-bottom: 15px;
-    display: flex;
-    align-items: center;
-    gap: 20px;
+    border-radius: 12px; padding: 20px 25px; margin-bottom: 15px;
+    display: flex; align-items: center; gap: 20px;
 }
 .header-container img { width: 90px; height: auto; }
 .header-container h1 { color: #ffffff !important; font-size: 2.2rem; margin: 0; padding: 0; font-weight: 700; }
@@ -98,8 +94,25 @@ def extract_from_pdf(file_bytes, filename):
     except: pass
     return pd.DataFrame(transactions)
 
-def load_voucher(file_bytes):
-    voucher_df = pd.read_excel(io.BytesIO(file_bytes), sheet_name='VoucherDetails', skiprows=8)
+def load_voucher_from_bytes(file_bytes):
+    """Load voucher from Excel bytes - handles different sheet names"""
+    xl = pd.ExcelFile(io.BytesIO(file_bytes))
+    sheets = xl.sheet_names
+    
+    # Find voucher sheet
+    voucher_sheet = None
+    for s in sheets:
+        if 'voucher' in s.lower() or 'details' in s.lower():
+            voucher_sheet = s
+            break
+    if voucher_sheet is None:
+        # Try first sheet as fallback
+        voucher_sheet = sheets[0] if len(sheets) > 0 else None
+    
+    if voucher_sheet is None:
+        return None
+    
+    voucher_df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=voucher_sheet, skiprows=8)
     voucher_df.columns = ['Date','Particulars','Vch_Type','In4Vch_No','Vch_No','Debit','Credit','Extra']
     voucher_df = voucher_df.dropna(subset=['Date','Particulars'])
     mask = ~voucher_df['Date'].astype(str).str.contains('Opening|Current Total|Closing|Report Name|Company|Format|Ledger|Period', na=False)
@@ -229,7 +242,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 📂 Upload Bank Statement")
     bank_file = st.file_uploader("Bank Statement", type=['xls','xlsx','pdf'], key="bank")
-    st.markdown("### 📋 Upload Voucher Ledger")
+    st.markdown("### 📋 Upload Voucher Ledger (Separate)")
     voucher_file = st.file_uploader("Voucher Ledger", type=['xls','xlsx'], key="voucher")
     st.markdown("---")
     st.metric("Target", "85-90%")
@@ -251,36 +264,62 @@ st.markdown("---")
 if not bank_file:
     col1, col2 = st.columns(2)
     with col1:
-        st.info("### 👋 Welcome\n**Upload Options:**\n1. **Excel file** → Full reconciliation + ERP export\n2. **PDF bank statement** → Extraction\n3. **PDF + Voucher Excel** → Full reconciliation + ERP export")
+        st.info("### 👋 Welcome\n**Upload Options:**\n1. **Excel file** (bank + voucher in one) → Full reconciliation\n2. **Bank statement** + **Voucher file** (separate) → Full reconciliation\n3. **PDF bank statement** → Extraction")
     with col2:
         st.success("### 🎯 Proven Results\n**F&C Trial (March 2026):**\n- 🔥 100% bank coverage\n- ✅ 35/35 handled\n- ⚡ < 1 second\n- 🔍 Near-miss & duplicate detection\n**Target: 85-90% → Delivered: 100%**")
 else:
     file_ext = os.path.splitext(bank_file.name)[1].lower()
-    with st.spinner(f"Processing..."):
+    with st.spinner(f"Processing {bank_file.name}..."):
         bank_bytes = bank_file.getbuffer()
         bank_df, voucher_df = None, None
+        
+        # LOAD BANK STATEMENT
         if file_ext in ['.xls','.xlsx']:
-            bank_df = pd.read_excel(io.BytesIO(bank_bytes), sheet_name='Bank Statement', skiprows=2)
+            xl = pd.ExcelFile(io.BytesIO(bank_bytes))
+            sheets = xl.sheet_names
+            
+            # Find bank sheet
+            bank_sheet = None
+            for s in sheets:
+                if 'bank' in s.lower() or 'statement' in s.lower():
+                    bank_sheet = s; break
+            if bank_sheet is None and len(sheets) > 0:
+                bank_sheet = sheets[0]
+            
+            bank_df = pd.read_excel(io.BytesIO(bank_bytes), sheet_name=bank_sheet, skiprows=2)
             bank_df.columns = ['SN','Transaction_Date','Ref_No','Transaction_Details','Value_Date','Withdrawals','Lodgment','Balance']
             bank_df = bank_df.dropna(subset=['Transaction_Date'])
             bank_df['Transaction_Date'] = pd.to_datetime(bank_df['Transaction_Date'], dayfirst=True, errors='coerce')
             for c in ['Withdrawals','Lodgment','Balance']: bank_df[c] = bank_df[c].apply(clean_number)
             bank_df['Amount'] = bank_df['Lodgment'] - bank_df['Withdrawals']
             bank_df['Amount_Abs'] = abs(bank_df['Amount'])
-            try:
-                voucher_df = load_voucher(bank_bytes)
-                st.success("✅ Voucher loaded")
-            except: st.info("ℹ️ No voucher sheet")
+            st.success(f"✅ Bank: {len(bank_df)} transactions from '{bank_sheet}'")
+            
+            # Check for voucher in same file
+            for s in sheets:
+                if 'voucher' in s.lower() or 'details' in s.lower():
+                    try:
+                        voucher_df = load_voucher_from_bytes(bank_bytes)
+                        st.success("✅ Voucher loaded from same file")
+                    except: pass
+                    break
+        
         elif file_ext == '.pdf' and HAS_PDFPLUMBER:
             bank_df = extract_from_pdf(bank_bytes, bank_file.name)
             if len(bank_df) > 0:
                 bank_df['Amount'] = bank_df['Lodgment'] - bank_df['Withdrawals']
                 bank_df['Amount_Abs'] = abs(bank_df['Amount'])
-                st.success(f"✅ {len(bank_df)} transactions extracted")
+                st.success(f"✅ {len(bank_df)} transactions extracted from PDF")
+        
+        # LOAD SEPARATE VOUCHER FILE
         if voucher_file and voucher_df is None:
-            try: voucher_df = load_voucher(voucher_file.getbuffer()); st.success("✅ Voucher loaded")
-            except: pass
+            try:
+                voucher_df = load_voucher_from_bytes(voucher_file.getbuffer())
+                st.success(f"✅ Voucher loaded from '{voucher_file.name}'")
+            except Exception as e:
+                st.error(f"Voucher error: {e}")
     
+    # PROCESS RESULTS
     if bank_df is not None and len(bank_df) > 0:
         if voucher_df is not None and len(voucher_df) > 0:
             result_df, s = reconcile(bank_df, voucher_df)
@@ -340,7 +379,7 @@ else:
                 st.markdown("---")
                 st.subheader("⚠️ Potential Duplicate Transactions")
                 if len(duplicates_df) > 0:
-                    st.warning(f"Found {len(duplicates_df)} potential duplicate transactions (same amount within 3 days)")
+                    st.warning(f"Found {len(duplicates_df)} potential duplicate transactions")
                     st.dataframe(duplicates_df, use_container_width=True, hide_index=True)
                 else: st.success("No duplicates detected!")
             
@@ -369,6 +408,6 @@ else:
             c1.metric("Transactions", len(bank_df))
             c2.metric("Total Debits", f"₦{td:,.2f}")
             c3.metric("Total Credits", f"₦{tc:,.2f}")
-            st.info("Upload Voucher Excel for full reconciliation.")
+            st.info("Upload a Voucher Excel file in the sidebar for full reconciliation.")
 
-st.caption(f"Churchgate Group — Bank Reconciliation System v5.0 | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+st.caption(f"Churchgate Group — Bank Reconciliation System v5.1 | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
