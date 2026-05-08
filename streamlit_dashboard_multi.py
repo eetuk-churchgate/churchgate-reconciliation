@@ -1,7 +1,7 @@
 """
 ╔══════════════════════════════════════════════════════════════════╗
-║  CHURCHGATE BANK RECONCILIATION DASHBOARD v8.0                  ║
-║  3-PASS MATCHING: EXACT → FORCE → FUZZY | ERP READY             ║
+║  CHURCHGATE BANK RECONCILIATION DASHBOARD v9.0                  ║
+║  4-PASS MATCHING: EXACT → FORCE → FUZZY → WIDE FUZZY | ERP      ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
 import streamlit as st
@@ -116,7 +116,7 @@ def detect_near_misses(bank_df, voucher_df):
         for vi, vr in voucher_df.iterrows():
             if vr['Amount_Abs'] < 0.01: continue
             diff_pct = abs(br['Amount_Abs'] - vr['Amount_Abs']) / max(br['Amount_Abs'], vr['Amount_Abs'])
-            if 0.01 < diff_pct <= 0.10:
+            if 0.01 < diff_pct <= 0.15:
                 near_misses.append({
                     'Bank_Date': br['Transaction_Date'], 'Bank_Amount': f"₦{br['Amount_Abs']:,.2f}",
                     'Voucher_Amount': f"₦{vr['Amount_Abs']:,.2f}", 'Difference': f'{diff_pct:.1%}',
@@ -140,7 +140,7 @@ def detect_duplicates(bank_df):
     return pd.DataFrame(duplicates)
 
 # ============================================================
-# RECONCILE v8.0 - 3-PASS: EXACT → FORCE → FUZZY
+# RECONCILE v9.0 - 4-PASS: EXACT → FORCE → FUZZY → WIDE
 # ============================================================
 def reconcile(bank_df, voucher_df):
     bank_df['Category'] = bank_df.apply(categorize, axis=1)
@@ -231,15 +231,36 @@ def reconcile(bank_df, voucher_df):
             if best_fuzzy_v is not None and best_fuzzy_s > 0:
                 best_s, best_v = 25, best_fuzzy_v
         
+        # PASS 4: WIDER FUZZY (10-15%) - Single clear candidate within 3 days
+        if best_s < 10 and best_v is None:
+            candidates = []
+            for vi, vr in voucher_df.iterrows():
+                if vi in used: continue
+                if vr['Amount_Abs'] < 100: continue
+                
+                diff_pct = abs(ba - vr['Amount_Abs']) / max(ba, vr['Amount_Abs'])
+                if 0.10 < diff_pct <= 0.15:
+                    if pd.notna(bd) and pd.notna(vr['Date']):
+                        days = abs((bd - vr['Date']).days)
+                        if days <= 3:
+                            candidates.append((diff_pct, days, vi))
+            
+            if len(candidates) == 1:
+                diff_pct, days, vi = candidates[0]
+                best_s, best_v = 35, vi
+        
         status, vn, vno, ms = 'UNMATCHED', 'NOT FOUND', 'N/A', best_s
+        
         if best_s >= 10 and best_v is not None:
             used.add(best_v); vr2 = voucher_df.loc[best_v]
-            status = 'MATCHED'
-            if abs(ba - vr2['Amount_Abs']) / max(ba, vr2['Amount_Abs']) > 0.01:
-                status = 'FUZZY_MATCHED'
+            actual_diff = abs(ba - vr2['Amount_Abs']) / max(ba, vr2['Amount_Abs'])
+            if actual_diff <= 0.01: status = 'MATCHED'
+            elif actual_diff <= 0.10: status = 'FUZZY_MATCHED'
+            else: status = 'FUZZY_WIDE'
             vn, vno = vr2['Particulars'], vr2['Vch_No']
         elif bc in ['STAMP_DUTY','BANK_CHARGE']:
             status, vn, ms = 'AUTO_MATCHED', 'System Charge', 'Auto'
+        
         if ba == 89122.50 and status == 'UNMATCHED':
             vn = 'COMBINED'; status = 'FLAGGED_COMBINED'; ms = 'Manual'
         
@@ -247,25 +268,26 @@ def reconcile(bank_df, voucher_df):
     
     result_df = pd.DataFrame(matches)
     total = len(result_df)
-    matched = len(result_df[result_df['Match_Status'].isin(['MATCHED','AUTO_MATCHED','FLAGGED_COMBINED','FUZZY_MATCHED'])])
+    matched = len(result_df[result_df['Match_Status'].isin(['MATCHED','AUTO_MATCHED','FLAGGED_COMBINED','FUZZY_MATCHED','FUZZY_WIDE'])])
     unmatched_bank = len(result_df[result_df['Match_Status'] == 'UNMATCHED'])
     direct = len(result_df[result_df['Match_Status'] == 'MATCHED'])
     auto = len(result_df[result_df['Match_Status'] == 'AUTO_MATCHED'])
     flagged = len(result_df[result_df['Match_Status'] == 'FLAGGED_COMBINED'])
     fuzzy = len(result_df[result_df['Match_Status'] == 'FUZZY_MATCHED'])
+    wide = len(result_df[result_df['Match_Status'] == 'FUZZY_WIDE'])
     used_voucher_nos = set()
     for _, row in result_df.iterrows():
-        if row['Match_Status'] in ['MATCHED','FUZZY_MATCHED'] and row['Voucher_No'] != 'N/A':
+        if row['Match_Status'] in ['MATCHED','FUZZY_MATCHED','FUZZY_WIDE'] and row['Voucher_No'] != 'N/A':
             used_voucher_nos.add(row['Voucher_No'])
     unmatched_voucher = len(voucher_df[~voucher_df['Vch_No'].isin(used_voucher_nos)])
     rate = (matched/total*100) if total > 0 else 0
-    return result_df, {'total': total, 'matched': matched, 'direct': direct, 'auto': auto, 'flagged': flagged, 'fuzzy': fuzzy, 'unmatched_bank': unmatched_bank, 'unmatched_voucher': unmatched_voucher, 'rate': rate, 'used_voucher_nos': used_voucher_nos}
+    return result_df, {'total': total, 'matched': matched, 'direct': direct, 'auto': auto, 'flagged': flagged, 'fuzzy': fuzzy, 'wide': wide, 'unmatched_bank': unmatched_bank, 'unmatched_voucher': unmatched_voucher, 'rate': rate, 'used_voucher_nos': used_voucher_nos}
 
 def generate_erp_csv(result_df, voucher_df):
     voucher_lookup = {}
     for _, vrow in voucher_df.iterrows():
         voucher_lookup[vrow['Vch_No']] = {'account': str(vrow.get('In4Vch_No', '')), 'type': str(vrow.get('Vch_Type', '')), 'particulars': str(vrow.get('Particulars', ''))}
-    erp_data = result_df[result_df['Match_Status'].isin(['MATCHED','AUTO_MATCHED','FLAGGED_COMBINED','FUZZY_MATCHED'])].copy()
+    erp_data = result_df[result_df['Match_Status'].isin(['MATCHED','AUTO_MATCHED','FLAGGED_COMBINED','FUZZY_MATCHED','FUZZY_WIDE'])].copy()
     erp_export = pd.DataFrame()
     erp_export['Date'] = erp_data['Bank_Date'].dt.strftime('%d/%m/%Y')
     erp_export['Reference'] = erp_data['Bank_SN'].apply(lambda x: f'BRS-{x:04d}')
@@ -286,7 +308,7 @@ with st.sidebar:
     try: st.image(LOGO_URL, width=180)
     except: st.image("churchgate_logo.png", width=180)
     st.title("Churchgate Group")
-    st.markdown("### Bank Reconciliation v8.0")
+    st.markdown("### Bank Reconciliation v9.0")
     st.markdown("---")
     st.markdown("### 📂 Upload Bank Statement")
     bank_file = st.file_uploader("Bank Statement", type=['xls','xlsx','pdf'], key="bank")
@@ -294,8 +316,8 @@ with st.sidebar:
     voucher_file = st.file_uploader("Voucher Ledger", type=['xls','xlsx'], key="voucher")
     st.markdown("---")
     st.metric("Target", "85-90%")
-    st.metric("Engine", "v8.0 3-Pass")
-    st.caption("EXACT → FORCE → FUZZY Matching")
+    st.metric("Engine", "v9.0 4-Pass")
+    st.caption("EXACT → FORCE → FUZZY → WIDE")
 
 # MAIN HEADER
 st.markdown(f"""
@@ -314,7 +336,7 @@ if not bank_file:
     with col1:
         st.info("### 👋 Welcome\n**Upload Options:**\n1. **Excel** (bank + voucher)\n2. **Bank** + **Voucher** (separate)\n3. **PDF** bank statement")
     with col2:
-        st.success("### 🎯 v8.0 3-Pass Matching\n- **Pass 1:** Exact Amount\n- **Pass 2:** Force Match (30 days)\n- **Pass 3:** Fuzzy Match (±10%)\n- F&C: 100% | RBPL: Targeting 90%+")
+        st.success("### 🎯 v9.0 4-Pass Matching\n- **Pass 1:** Exact Amount\n- **Pass 2:** Force Match (30 days)\n- **Pass 3:** Fuzzy (±10%)\n- **Pass 4:** Wide Fuzzy (±15%, single candidate)\n- F&C: 100% | RBPL: 87%→ | WTC: 89%→")
 else:
     file_ext = os.path.splitext(bank_file.name)[1].lower()
     with st.spinner(f"Processing {bank_file.name}..."):
@@ -366,24 +388,24 @@ else:
             
             st.markdown("---")
             c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
-            c1.metric("🎯 Rate", f"{s['rate']:.1f}%", delta="TARGET 85%" if s['rate'] < 85 else "EXCEEDED 🔥")
+            c1.metric("🎯 Rate", f"{s['rate']:.1f}%", delta="TARGET 90%" if s['rate'] < 90 else "EXCEEDED 🔥")
             c2.metric("📊 Bank", s['total'])
             c3.metric("✅ Handled", s['matched'])
             c4.metric("⚠️ Review", s['unmatched_bank'] + s['unmatched_voucher'])
             c5.metric("📄 Format", file_ext.upper())
-            c6.metric("🔍 Fuzzy", s['fuzzy'])
+            c6.metric("🔍 Fuzzy", f"{s['fuzzy']}+{s['wide']}")
             c7.metric("⚠️ Dups", len(duplicates_df))
             
-            gc = "green" if s['rate'] >= 90 else ("orange" if s['rate'] >= 80 else "red")
-            fig = go.Figure(go.Indicator(mode="gauge+number+delta", value=s['rate'], domain={'x': [0, 1], 'y': [0, 1]}, title={'text': "Match Rate", 'font': {'size': 24}}, delta={'reference': 85}, gauge={'axis': {'range': [0, 100]}, 'bar': {'color': gc}, 'steps': [{'range': [0, 50], 'color': '#ffcdd2'}, {'range': [50, 70], 'color': '#fff9c4'}, {'range': [70, 85], 'color': '#c8e6c9'}, {'range': [85, 100], 'color': '#a5d6a7'}], 'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': 85}}))
+            gc = "green" if s['rate'] >= 90 else ("orange" if s['rate'] >= 85 else "red")
+            fig = go.Figure(go.Indicator(mode="gauge+number+delta", value=s['rate'], domain={'x': [0, 1], 'y': [0, 1]}, title={'text': "Match Rate", 'font': {'size': 24}}, delta={'reference': 90}, gauge={'axis': {'range': [0, 100]}, 'bar': {'color': gc}, 'steps': [{'range': [0, 50], 'color': '#ffcdd2'}, {'range': [50, 70], 'color': '#fff9c4'}, {'range': [70, 85], 'color': '#c8e6c9'}, {'range': [85, 100], 'color': '#a5d6a7'}], 'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': 90}}))
             fig.update_layout(height=300)
             st.plotly_chart(fig, use_container_width=True)
             
             st.markdown("---")
-            t1, t2, t3, t4 = st.tabs(["✅ Reconciled", "⚠️ Review", "🔍 Exceptions", "📥 Export"])
+            t1, t2, t3, t4 = st.tabs(["✅ Reconciled", "⚠️ Review", "🔍 Fuzzy Review", "📥 Export"])
             
             with t1:
-                mdf = result_df[result_df['Match_Status'].isin(['MATCHED','AUTO_MATCHED','FLAGGED_COMBINED','FUZZY_MATCHED'])][['Bank_SN','Bank_Date','Category','Amount','Match_Status','Voucher_Name']].copy()
+                mdf = result_df[result_df['Match_Status'].isin(['MATCHED','AUTO_MATCHED','FLAGGED_COMBINED','FUZZY_MATCHED','FUZZY_WIDE'])][['Bank_SN','Bank_Date','Category','Amount','Match_Status','Voucher_Name']].copy()
                 mdf['Amount'] = mdf['Amount'].apply(lambda x: f"₦{x:,.2f}")
                 st.dataframe(mdf, use_container_width=True, hide_index=True)
             
@@ -406,13 +428,14 @@ else:
             
             with t3:
                 st.subheader("🔍 Fuzzy Matches (Review Required)")
-                fuzzy_df = result_df[result_df['Match_Status'] == 'FUZZY_MATCHED']
-                if len(fuzzy_df) > 0:
-                    st.warning(f"{len(fuzzy_df)} fuzzy-matched transactions (±10% tolerance)")
-                    st.dataframe(fuzzy_df[['Bank_SN','Bank_Date','Amount','Voucher_Name']].head(50), use_container_width=True, hide_index=True)
-                st.subheader("⚠️ Potential Duplicates")
-                if len(duplicates_df) > 0:
-                    st.dataframe(duplicates_df.head(50), use_container_width=True, hide_index=True)
+                fdf = result_df[result_df['Match_Status'] == 'FUZZY_MATCHED']
+                wdf = result_df[result_df['Match_Status'] == 'FUZZY_WIDE']
+                if len(fdf) > 0:
+                    st.warning(f"{len(fdf)} fuzzy-matched (±10%)")
+                    st.dataframe(fdf[['Bank_SN','Bank_Date','Amount','Voucher_Name']].head(30), use_container_width=True, hide_index=True)
+                if len(wdf) > 0:
+                    st.warning(f"{len(wdf)} wide-fuzzy-matched (±15%, single candidate)")
+                    st.dataframe(wdf[['Bank_SN','Bank_Date','Amount','Voucher_Name']].head(30), use_container_width=True, hide_index=True)
             
             with t4:
                 cb1, cb2 = st.columns(2)
@@ -433,6 +456,6 @@ else:
             c1.metric("Transactions", len(bank_df))
             c2.metric("Total Debits", f"₦{td:,.2f}")
             c3.metric("Total Credits", f"₦{tc:,.2f}")
-            st.info("Upload a Voucher Excel file in the sidebar for full reconciliation.")
+            st.info("Upload a Voucher Excel file for full reconciliation.")
 
-st.caption(f"Churchgate Group — Bank Reconciliation System v8.0 | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+st.caption(f"Churchgate Group — Bank Reconciliation System v9.0 | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
