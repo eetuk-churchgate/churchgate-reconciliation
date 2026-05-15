@@ -2,7 +2,7 @@
 ╔══════════════════════════════════════════════════════════════════╗
 ║     CHURCHGATE GROUP — BANK RECONCILIATION SYSTEM               ║
 ║     Enterprise AI-Powered Reconciliation Engine                 ║
-║     Auto-Match | Duplicate Detection | ERP Ready                ║
+║     Auto-Match | Duplicate Detection | In4Velocity ERP Ready    ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
 import streamlit as st
@@ -245,7 +245,6 @@ def reconcile(bank_df, voucher_df):
                 diff_pct, days, vi = candidates[0]
                 best_s, best_v = 35, vi
         
-        # FINAL FIX: Match by raw bank detail text directly
         if best_v is None and 'CHURCHGATE STAFF COOPERATIVE SOCIETY' in str(br['Transaction_Details']).upper():
             for vi, vr in voucher_df.iterrows():
                 if vi in used: continue
@@ -288,23 +287,28 @@ def reconcile(bank_df, voucher_df):
     return result_df, {'total': total, 'matched': matched, 'direct': direct, 'auto': auto, 'flagged': flagged, 'fuzzy': fuzzy, 'wide': wide, 'unmatched_bank': unmatched_bank, 'unmatched_voucher': unmatched_voucher, 'rate': rate, 'used_voucher_nos': used_voucher_nos}
 
 def generate_erp_csv(result_df, voucher_df):
+    """Generate In4Velocity-ready ERP CSV with exact required columns"""
     voucher_lookup = {}
     for _, vrow in voucher_df.iterrows():
-        voucher_lookup[vrow['Vch_No']] = {'account': str(vrow.get('In4Vch_No', '')), 'type': str(vrow.get('Vch_Type', '')), 'particulars': str(vrow.get('Particulars', ''))}
-    erp_data = result_df[result_df['Match_Status'].isin(['MATCHED','AUTO_MATCHED','FLAGGED_COMBINED','FUZZY_MATCHED','FUZZY_WIDE'])].copy()
+        voucher_lookup[vrow['Vch_No']] = {
+            'account': str(vrow.get('In4Vch_No', '')),
+            'type': str(vrow.get('Vch_Type', '')),
+            'particulars': str(vrow.get('Particulars', ''))
+        }
+    
+    erp_data = result_df[result_df['Match_Status'].isin(
+        ['MATCHED','AUTO_MATCHED','FLAGGED_COMBINED','FUZZY_MATCHED','FUZZY_WIDE']
+    )].copy()
+    
     erp_export = pd.DataFrame()
-    erp_export['Date'] = erp_data['Bank_Date'].dt.strftime('%d/%m/%Y')
-    erp_export['Reference'] = erp_data['Bank_SN'].apply(lambda x: f'BRS-{x:04d}')
-    erp_export['Description'] = erp_data['Bank_Details']
-    erp_export['Amount'] = erp_data['Amount'].apply(lambda x: f'{abs(x):,.2f}')
-    erp_export['Type'] = erp_data['Amount'].apply(lambda x: 'CREDIT' if x > 0 else 'DEBIT')
-    erp_export['Matched_To'] = erp_data['Voucher_Name']
-    erp_export['Voucher_No'] = erp_data['Voucher_No']
-    erp_export['Status'] = erp_data['Match_Status']
-    erp_export['Import_Date'] = datetime.now().strftime('%d/%m/%Y')
-    erp_export['Reconciled_By'] = 'AI Engine'
-    erp_export['ERP_Account_Code'] = erp_export['Voucher_No'].apply(lambda x: voucher_lookup.get(x, {}).get('account', 'AUTO-MATCHED') if x not in ['N/A', ''] else 'SYSTEM')
-    erp_export['ERP_Cost_Center'] = erp_export['Voucher_No'].apply(lambda x: voucher_lookup.get(x, {}).get('type', 'AUTO') if x not in ['N/A', ''] else 'SYSTEM')
+    erp_export['S/N'] = range(1, len(erp_data) + 1)
+    erp_export['Instrument Date'] = erp_data['Bank_Date'].dt.strftime('%d/%m/%Y')
+    erp_export['Instrument No'] = erp_data['Bank_SN'].apply(lambda x: f'BRS-{x:04d}')
+    erp_export['Description'] = erp_data['Voucher_Name']
+    erp_export['Amount Type'] = erp_data['Amount'].apply(lambda x: 'DEBIT' if x < 0 else 'CREDIT')
+    erp_export['Debit Amount'] = erp_data['Amount'].apply(lambda x: f'{abs(x):,.2f}' if x < 0 else '0.00')
+    erp_export['Credit Amount'] = erp_data['Amount'].apply(lambda x: f'{abs(x):,.2f}' if x > 0 else '0.00')
+    
     return erp_export.to_csv(index=False)
 
 # SIDEBAR
@@ -366,7 +370,7 @@ if not bank_file:
         - ✅ **Auto-Reconciliation** — Matches bank to vouchers
         - 🔍 **Near-Miss Detection** — Flags close-but-not-exact amounts
         - ⚠️ **Duplicate Detection** — Identifies repeated transactions
-        - 📁 **ERP Export** — One-click CSV for In4Velocity
+        - 📁 **In4Velocity ERP Export** — Direct CSV format
         - 📊 **Exception Reports** — Clear audit trail for review
         - 🧠 **AI-Powered** — Continuously improving accuracy
         """)
@@ -483,10 +487,10 @@ else:
                             with pd.ExcelWriter(tmp.name, engine='xlsxwriter') as w: result_df.to_excel(w, sheet_name='Reconciliation', index=False)
                             with open(tmp.name, 'rb') as f: st.download_button("📥 Download Report", f, file_name=f"Recon_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
                 with cb2:
-                    if st.button("📁 Download ERP Import File (CSV)", type="primary"):
+                    if st.button("📁 Download In4Velocity ERP CSV", type="primary"):
                         erp_csv = generate_erp_csv(result_df, voucher_df)
-                        st.download_button("📥 Download ERP CSV", erp_csv, file_name=f"ERP_Import_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", mime="text/csv")
-                st.info("💡 The ERP CSV file is ready for direct import into In4Velocity. Account codes are auto-filled from the voucher ledger.")
+                        st.download_button("📥 Download ERP CSV", erp_csv, file_name=f"In4V_Import_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", mime="text/csv")
+                st.info("💡 The ERP CSV is formatted to In4Velocity's exact specification: S/N, Instrument Date, Instrument No, Description, Amount Type, Debit Amount, Credit Amount.")
         else:
             st.subheader("📄 Transaction Extraction")
             td = bank_df['Withdrawals'].sum() if 'Withdrawals' in bank_df.columns else 0
@@ -498,4 +502,4 @@ else:
             st.info("📋 Upload a Voucher Ledger file in the sidebar to complete reconciliation.")
 
 st.markdown("---")
-st.caption(f"Churchgate Group — Bank Reconciliation System | Enterprise AI Engine | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+st.caption(f"Churchgate Group — Bank Reconciliation System | Enterprise AI Engine | In4Velocity ERP Ready | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
