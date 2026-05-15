@@ -146,11 +146,18 @@ def reconcile(bank_df, voucher_df):
     btm = bank_df[bank_df['Category'] != 'OPENING']
     
     for bi, br in btm.iterrows():
-        ba, bd, bc = br['Amount_Abs'], br['Transaction_Date'], br['Category']
+        ba = br['Amount_Abs']
+        original_amount = br['Amount']  # KEEP THE SIGNED ORIGINAL AMOUNT
+        bd, bc = br['Transaction_Date'], br['Category']
         bt, bd_raw = normalize(br['Transaction_Details']), str(br['Transaction_Details'])
         current_sn = br.get('SN', bi+1)
+        
         if ba < 0.01:
-            matches.append({'Bank_SN': current_sn, 'Bank_Date': br['Transaction_Date'], 'Bank_Details': br['Transaction_Details'], 'Amount': 0, 'Category': bc, 'Match_Status': 'SKIPPED', 'Match_Score': 0, 'Voucher_Name': 'Zero Amount', 'Voucher_No': 'N/A'})
+            matches.append({'Bank_SN': current_sn, 'Bank_Date': br['Transaction_Date'], 
+                           'Bank_Details': br['Transaction_Details'], 
+                           'Amount': 0, 'Amount_Abs': 0, 'Category': bc, 
+                           'Match_Status': 'SKIPPED', 'Match_Score': 0, 
+                           'Voucher_Name': 'Zero Amount', 'Voucher_No': 'N/A'})
             continue
         
         best_s, best_v = 0, None
@@ -267,7 +274,14 @@ def reconcile(bank_df, voucher_df):
         if ba == 89122.50 and status == 'UNMATCHED':
             vn = 'COMBINED'; status = 'FLAGGED_COMBINED'; ms = 'Manual'
         
-        matches.append({'Bank_SN': current_sn, 'Bank_Date': br['Transaction_Date'], 'Bank_Details': br['Transaction_Details'], 'Amount': ba, 'Category': bc, 'Match_Status': status, 'Match_Score': ms, 'Voucher_Name': vn, 'Voucher_No': vno})
+        matches.append({
+            'Bank_SN': current_sn, 'Bank_Date': br['Transaction_Date'], 
+            'Bank_Details': br['Transaction_Details'], 
+            'Amount': original_amount,  # SIGNED AMOUNT FOR ERP
+            'Amount_Abs': ba,  # ABSOLUTE VALUE FOR MATCHING
+            'Category': bc, 'Match_Status': status, 'Match_Score': ms, 
+            'Voucher_Name': vn, 'Voucher_No': vno
+        })
     
     result_df = pd.DataFrame(matches)
     total = len(result_df)
@@ -287,7 +301,7 @@ def reconcile(bank_df, voucher_df):
     return result_df, {'total': total, 'matched': matched, 'direct': direct, 'auto': auto, 'flagged': flagged, 'fuzzy': fuzzy, 'wide': wide, 'unmatched_bank': unmatched_bank, 'unmatched_voucher': unmatched_voucher, 'rate': rate, 'used_voucher_nos': used_voucher_nos}
 
 def generate_erp_csv(result_df, voucher_df):
-    """Generate In4Velocity-ready ERP CSV with exact required columns"""
+    """Generate In4Velocity-ready ERP CSV with CORRECT debit/credit columns"""
     voucher_lookup = {}
     for _, vrow in voucher_df.iterrows():
         voucher_lookup[vrow['Vch_No']] = {
@@ -305,9 +319,18 @@ def generate_erp_csv(result_df, voucher_df):
     erp_export['Instrument Date'] = erp_data['Bank_Date'].dt.strftime('%d/%m/%Y')
     erp_export['Instrument No'] = erp_data['Bank_SN'].apply(lambda x: f'BRS-{x:04d}')
     erp_export['Description'] = erp_data['Voucher_Name']
-    erp_export['Amount Type'] = erp_data['Amount'].apply(lambda x: 'DEBIT' if x < 0 else 'CREDIT')
-    erp_export['Debit Amount'] = erp_data['Amount'].apply(lambda x: f'{abs(x):,.2f}' if x < 0 else '0.00')
-    erp_export['Credit Amount'] = erp_data['Amount'].apply(lambda x: f'{abs(x):,.2f}' if x > 0 else '0.00')
+    
+    # USE THE SIGNED AMOUNT for correct debit/credit classification
+    # Negative Amount = DEBIT (withdrawal), Positive Amount = CREDIT (lodgment)
+    erp_export['Amount Type'] = erp_data['Amount'].apply(
+        lambda x: 'DEBIT' if x < 0 else 'CREDIT'
+    )
+    erp_export['Debit Amount'] = erp_data['Amount'].apply(
+        lambda x: f'{abs(x):,.2f}' if x < 0 else '0.00'
+    )
+    erp_export['Credit Amount'] = erp_data['Amount'].apply(
+        lambda x: f'{abs(x):,.2f}' if x > 0 else '0.00'
+    )
     
     return erp_export.to_csv(index=False)
 
@@ -442,8 +465,8 @@ else:
             t1, t2, t3, t4 = st.tabs(["✅ Reconciled", "⚠️ Review Items", "🔍 Exception Analysis", "📥 Export"])
             
             with t1:
-                mdf = result_df[result_df['Match_Status'].isin(['MATCHED','AUTO_MATCHED','FLAGGED_COMBINED','FUZZY_MATCHED','FUZZY_WIDE'])][['Bank_SN','Bank_Date','Category','Amount','Match_Status','Voucher_Name']].copy()
-                mdf['Amount'] = mdf['Amount'].apply(lambda x: f"₦{x:,.2f}")
+                mdf = result_df[result_df['Match_Status'].isin(['MATCHED','AUTO_MATCHED','FLAGGED_COMBINED','FUZZY_MATCHED','FUZZY_WIDE'])][['Bank_SN','Bank_Date','Category','Amount_Abs','Match_Status','Voucher_Name']].copy()
+                mdf['Amount_Abs'] = mdf['Amount_Abs'].apply(lambda x: f"₦{x:,.2f}")
                 st.dataframe(mdf, use_container_width=True, hide_index=True)
             
             with t2:
@@ -452,8 +475,8 @@ else:
                     st.markdown("**Unmatched Bank Transactions**")
                     ub = result_df[result_df['Match_Status'] == 'UNMATCHED']
                     if len(ub) > 0:
-                        ub_d = ub[['Bank_SN','Bank_Date','Category','Amount','Bank_Details']].copy()
-                        ub_d['Amount'] = ub_d['Amount'].apply(lambda x: f"₦{x:,.2f}")
+                        ub_d = ub[['Bank_SN','Bank_Date','Category','Amount_Abs','Bank_Details']].copy()
+                        ub_d['Amount_Abs'] = ub_d['Amount_Abs'].apply(lambda x: f"₦{x:,.2f}")
                         st.dataframe(ub_d, use_container_width=True, hide_index=True)
                     else: st.success("🎉 All transactions matched!")
                 with cb:
@@ -471,10 +494,10 @@ else:
                 wdf = result_df[result_df['Match_Status'] == 'FUZZY_WIDE']
                 if len(fdf) > 0:
                     st.warning(f"{len(fdf)} transactions matched with high confidence (±10% tolerance)")
-                    st.dataframe(fdf[['Bank_SN','Bank_Date','Amount','Voucher_Name']].head(30), use_container_width=True, hide_index=True)
+                    st.dataframe(fdf[['Bank_SN','Bank_Date','Amount_Abs','Voucher_Name']].head(30), use_container_width=True, hide_index=True)
                 if len(wdf) > 0:
                     st.info(f"{len(wdf)} transactions matched with moderate confidence (±15% tolerance)")
-                    st.dataframe(wdf[['Bank_SN','Bank_Date','Amount','Voucher_Name']].head(30), use_container_width=True, hide_index=True)
+                    st.dataframe(wdf[['Bank_SN','Bank_Date','Amount_Abs','Voucher_Name']].head(30), use_container_width=True, hide_index=True)
                 if len(duplicates_df) > 0:
                     st.warning(f"{len(duplicates_df)} potential duplicate transactions detected")
             
@@ -490,7 +513,7 @@ else:
                     if st.button("📁 Download In4Velocity ERP CSV", type="primary"):
                         erp_csv = generate_erp_csv(result_df, voucher_df)
                         st.download_button("📥 Download ERP CSV", erp_csv, file_name=f"In4V_Import_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", mime="text/csv")
-                st.info("💡 The ERP CSV is formatted to In4Velocity's exact specification: S/N, Instrument Date, Instrument No, Description, Amount Type, Debit Amount, Credit Amount.")
+                st.info("💡 The ERP CSV is formatted to In4Velocity's exact specification with correct Debit/Credit classification. Debits (withdrawals) show in Debit Amount column. Credits (lodgments) show in Credit Amount column.")
         else:
             st.subheader("📄 Transaction Extraction")
             td = bank_df['Withdrawals'].sum() if 'Withdrawals' in bank_df.columns else 0
