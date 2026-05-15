@@ -147,7 +147,7 @@ def reconcile(bank_df, voucher_df):
     
     for bi, br in btm.iterrows():
         ba = br['Amount_Abs']
-        original_amount = br['Amount']  # KEEP THE SIGNED ORIGINAL AMOUNT
+        original_amount = br['Amount']
         bd, bc = br['Transaction_Date'], br['Category']
         bt, bd_raw = normalize(br['Transaction_Details']), str(br['Transaction_Details'])
         current_sn = br.get('SN', bi+1)
@@ -277,8 +277,7 @@ def reconcile(bank_df, voucher_df):
         matches.append({
             'Bank_SN': current_sn, 'Bank_Date': br['Transaction_Date'], 
             'Bank_Details': br['Transaction_Details'], 
-            'Amount': original_amount,  # SIGNED AMOUNT FOR ERP
-            'Amount_Abs': ba,  # ABSOLUTE VALUE FOR MATCHING
+            'Amount': original_amount, 'Amount_Abs': ba,
             'Category': bc, 'Match_Status': status, 'Match_Score': ms, 
             'Voucher_Name': vn, 'Voucher_No': vno
         })
@@ -301,36 +300,33 @@ def reconcile(bank_df, voucher_df):
     return result_df, {'total': total, 'matched': matched, 'direct': direct, 'auto': auto, 'flagged': flagged, 'fuzzy': fuzzy, 'wide': wide, 'unmatched_bank': unmatched_bank, 'unmatched_voucher': unmatched_voucher, 'rate': rate, 'used_voucher_nos': used_voucher_nos}
 
 def generate_erp_csv(result_df, voucher_df):
-    """Generate In4Velocity-ready ERP CSV with CORRECT debit/credit columns"""
-    voucher_lookup = {}
-    for _, vrow in voucher_df.iterrows():
-        voucher_lookup[vrow['Vch_No']] = {
-            'account': str(vrow.get('In4Vch_No', '')),
-            'type': str(vrow.get('Vch_Type', '')),
-            'particulars': str(vrow.get('Particulars', ''))
-        }
+    """Generate In4Velocity-ready ERP CSV - NO EMPTY ROWS, CLEAN OUTPUT"""
     
-    erp_data = result_df[result_df['Match_Status'].isin(
-        ['MATCHED','AUTO_MATCHED','FLAGGED_COMBINED','FUZZY_MATCHED','FUZZY_WIDE']
-    )].copy()
+    # STRICT FILTER: Only include transactions that have a valid match
+    valid_statuses = ['MATCHED','AUTO_MATCHED','FLAGGED_COMBINED','FUZZY_MATCHED','FUZZY_WIDE']
+    
+    erp_data = result_df[
+        (result_df['Match_Status'].isin(valid_statuses)) & 
+        (result_df['Bank_Date'].notna()) &
+        (result_df['Voucher_Name'].notna()) &
+        (result_df['Voucher_Name'] != '') &
+        (result_df['Voucher_Name'] != 'NOT FOUND') &
+        (result_df['Voucher_Name'] != 'Zero Amount') &
+        (result_df['Voucher_Name'] != 'Zero') &
+        (result_df['Amount'].notna())
+    ].copy()
+    
+    # Reset index for clean sequential numbering
+    erp_data = erp_data.reset_index(drop=True)
     
     erp_export = pd.DataFrame()
     erp_export['S/N'] = range(1, len(erp_data) + 1)
     erp_export['Instrument Date'] = erp_data['Bank_Date'].dt.strftime('%d/%m/%Y')
     erp_export['Instrument No'] = erp_data['Bank_SN'].apply(lambda x: f'BRS-{x:04d}')
     erp_export['Description'] = erp_data['Voucher_Name']
-    
-    # USE THE SIGNED AMOUNT for correct debit/credit classification
-    # Negative Amount = DEBIT (withdrawal), Positive Amount = CREDIT (lodgment)
-    erp_export['Amount Type'] = erp_data['Amount'].apply(
-        lambda x: 'DEBIT' if x < 0 else 'CREDIT'
-    )
-    erp_export['Debit Amount'] = erp_data['Amount'].apply(
-        lambda x: f'{abs(x):,.2f}' if x < 0 else '0.00'
-    )
-    erp_export['Credit Amount'] = erp_data['Amount'].apply(
-        lambda x: f'{abs(x):,.2f}' if x > 0 else '0.00'
-    )
+    erp_export['Amount Type'] = erp_data['Amount'].apply(lambda x: 'DEBIT' if x < 0 else 'CREDIT')
+    erp_export['Debit Amount'] = erp_data['Amount'].apply(lambda x: f'{abs(x):,.2f}' if x < 0 else '0.00')
+    erp_export['Credit Amount'] = erp_data['Amount'].apply(lambda x: f'{abs(x):,.2f}' if x > 0 else '0.00')
     
     return erp_export.to_csv(index=False)
 
@@ -393,7 +389,7 @@ if not bank_file:
         - ✅ **Auto-Reconciliation** — Matches bank to vouchers
         - 🔍 **Near-Miss Detection** — Flags close-but-not-exact amounts
         - ⚠️ **Duplicate Detection** — Identifies repeated transactions
-        - 📁 **In4Velocity ERP Export** — Direct CSV format
+        - 📁 **In4Velocity ERP Export** — Clean CSV, no empty rows
         - 📊 **Exception Reports** — Clear audit trail for review
         - 🧠 **AI-Powered** — Continuously improving accuracy
         """)
@@ -503,6 +499,7 @@ else:
             
             with t4:
                 st.subheader("📥 Export Reconciliation Reports")
+                st.info(f"✅ **{s['matched']} reconciled transactions** ready for ERP export. Unmatched items are excluded for clean import.")
                 cb1, cb2 = st.columns(2)
                 with cb1:
                     if st.button("📊 Download Full Report (Excel)", type="primary"):
@@ -513,7 +510,7 @@ else:
                     if st.button("📁 Download In4Velocity ERP CSV", type="primary"):
                         erp_csv = generate_erp_csv(result_df, voucher_df)
                         st.download_button("📥 Download ERP CSV", erp_csv, file_name=f"In4V_Import_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", mime="text/csv")
-                st.info("💡 The ERP CSV is formatted to In4Velocity's exact specification with correct Debit/Credit classification. Debits (withdrawals) show in Debit Amount column. Credits (lodgments) show in Credit Amount column.")
+                st.info("💡 **Only successfully reconciled transactions are included.** Unmatched items require manual review and are excluded from the ERP import file.")
         else:
             st.subheader("📄 Transaction Extraction")
             td = bank_df['Withdrawals'].sum() if 'Withdrawals' in bank_df.columns else 0
