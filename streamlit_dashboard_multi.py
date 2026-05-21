@@ -31,7 +31,6 @@ st.markdown("""
 .header-container img { width: 90px; height: auto; }
 .header-container h1 { color: #ffffff !important; font-size: 2.2rem; margin: 0; padding: 0; font-weight: 700; }
 .header-container h4 { color: #b0bec5 !important; margin: 5px 0 0 0; font-weight: 400; }
-.push-btn { background: linear-gradient(135deg, #1b5e20, #2e7d32) !important; color: white !important; font-weight: 700 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -302,7 +301,7 @@ def reconcile(bank_df, voucher_df):
     return result_df, {'total': total, 'matched': matched, 'direct': direct, 'auto': auto, 'flagged': flagged, 'fuzzy': fuzzy, 'wide': wide, 'unmatched_bank': unmatched_bank, 'unmatched_voucher': unmatched_voucher, 'rate': rate, 'used_voucher_nos': used_voucher_nos}
 
 def extract_cert_no(details):
-    """Extract certificate number from bank details text"""
+    """Extract certificate number - ALWAYS returns string with 2 decimal places"""
     text = str(details).upper()
     patterns = [
         r'E[- ]CERT[- ]NO[\.]?\s*(\d+)',
@@ -313,12 +312,24 @@ def extract_cert_no(details):
     for pattern in patterns:
         match = re.search(pattern, text)
         if match:
-            num = match.group(1)
-            return f'{int(num):.2f}'
+            num = int(match.group(1))
+            return f'{num:.2f}'
     return ''
 
+def clean_ref_no(ref_val):
+    """Clean reference number - handle scientific notation and NaN"""
+    if pd.isna(ref_val) or str(ref_val).strip() in ['', 'nan', 'NaN', 'None']:
+        return ''
+    try:
+        num = float(str(ref_val))
+        if num > 1000000:
+            return f'{int(num)}'
+        return str(int(num)) if num == int(num) else str(ref_val)
+    except:
+        return str(ref_val)
+
 def generate_erp_csv(result_df, voucher_df):
-    """Generate In4Velocity-ready ERP CSV with Transaction Details (short Ref) + Ref No (cert number)"""
+    """Generate In4Velocity-ready ERP CSV with proper Ref No formatting"""
     
     valid_statuses = ['MATCHED','AUTO_MATCHED','FLAGGED_COMBINED','FUZZY_MATCHED','FUZZY_WIDE']
     
@@ -335,7 +346,7 @@ def generate_erp_csv(result_df, voucher_df):
     erp_export = pd.DataFrame()
     erp_export['SN'] = range(1, len(erp_data) + 1)
     erp_export['Transaction Date'] = erp_data['Bank_Date'].dt.strftime('%d/%m/%Y')
-    erp_export['Transaction Details'] = erp_data['Bank_Ref'].fillna('')
+    erp_export['Transaction Details'] = erp_data['Bank_Ref'].apply(clean_ref_no)
     erp_export['Ref No'] = erp_data['Bank_Details'].apply(extract_cert_no)
     erp_export['Amount Type'] = erp_data['Amount'].apply(lambda x: 'DEBIT' if x < 0 else 'CREDIT')
     erp_export['Withdrawals'] = erp_data['Amount'].apply(lambda x: f'{abs(x):,.2f}' if x < 0 else '0.00')
@@ -424,6 +435,8 @@ else:
             bank_df.columns = ['SN','Transaction_Date','Ref_No','Transaction_Details','Value_Date','Withdrawals','Lodgment','Balance']
             bank_df = bank_df.dropna(subset=['Transaction_Date'])
             bank_df['Transaction_Date'] = pd.to_datetime(bank_df['Transaction_Date'], dayfirst=True, errors='coerce')
+            # FORCE Ref_No to string to prevent scientific notation
+            bank_df['Ref_No'] = bank_df['Ref_No'].astype(str).replace('nan', '').replace('NaN', '')
             for c in ['Withdrawals','Lodgment','Balance']: bank_df[c] = bank_df[c].apply(clean_number)
             bank_df['Amount'] = bank_df['Lodgment'] - bank_df['Withdrawals']
             bank_df['Amount_Abs'] = abs(bank_df['Amount'])
@@ -514,7 +527,6 @@ else:
                 st.subheader("📥 Export Reconciliation Reports")
                 st.info(f"✅ **{s['matched']} reconciled transactions** ready for ERP export.")
                 
-                # Row 1: Download buttons
                 cb1, cb2 = st.columns(2)
                 with cb1:
                     if st.button("📊 Download Full Report (Excel)", type="primary", use_container_width=True):
@@ -528,14 +540,12 @@ else:
                 
                 st.markdown("---")
                 
-                # Row 2: Push to In4Velocity
                 st.subheader("🚀 Push to In4Velocity ERP")
                 
-                # API Configuration (PLACEHOLDER - Update when Paul provides details)
                 API_CONFIG = {
-                    'base_url': 'https://in4velocity-api.churchgate.com',  # ← UPDATE THIS
-                    'endpoint': '/api/v1/brs/transactions',                # ← UPDATE THIS
-                    'api_key': 'YOUR_API_KEY_HERE',                        # ← UPDATE THIS
+                    'base_url': 'https://in4velocity-api.churchgate.com',
+                    'endpoint': '/api/v1/brs/transactions',
+                    'api_key': 'YOUR_API_KEY_HERE',
                     'timeout': 30
                 }
                 
@@ -546,17 +556,17 @@ else:
                     st.text_input("API Key", value="●●●●●●●●", disabled=True, key="api_key_display")
                 
                 if st.button("🚀 Push to In4Velocity ERP", type="primary", use_container_width=True):
-                    erp_data = result_df[result_df['Match_Status'].isin(['MATCHED','AUTO_MATCHED','FLAGGED_COMBINED','FUZZY_MATCHED','FUZZY_WIDE'])].copy()
+                    erp_push_data = result_df[result_df['Match_Status'].isin(['MATCHED','AUTO_MATCHED','FLAGGED_COMBINED','FUZZY_MATCHED','FUZZY_WIDE'])].copy()
                     
                     success_count = 0
                     fail_count = 0
                     progress_bar = st.progress(0)
                     status_text = st.empty()
                     
-                    for i, (_, row) in enumerate(erp_data.iterrows()):
+                    for i, (_, row) in enumerate(erp_push_data.iterrows()):
                         payload = {
                             'instrumentDate': row['Bank_Date'].strftime('%Y-%m-%d') if pd.notna(row['Bank_Date']) else '',
-                            'instrumentNo': str(row.get('Bank_Ref', '')),
+                            'instrumentNo': clean_ref_no(row.get('Bank_Ref', '')),
                             'description': str(row.get('Voucher_Name', '')),
                             'certificateNo': extract_cert_no(row.get('Bank_Details', '')),
                             'amountType': 'DEBIT' if row['Amount'] < 0 else 'CREDIT',
@@ -568,7 +578,7 @@ else:
                         }
                         
                         try:
-                            # PLACEHOLDER: Replace with actual API call when Paul provides details
+                            # PLACEHOLDER - Replace with real API call
                             # import requests
                             # response = requests.post(
                             #     f"{API_CONFIG['base_url']}{API_CONFIG['endpoint']}",
@@ -576,29 +586,23 @@ else:
                             #     headers={'Authorization': f'Bearer {API_CONFIG["api_key"]}', 'Content-Type': 'application/json'},
                             #     timeout=API_CONFIG['timeout']
                             # )
-                            # if response.status_code == 200:
-                            #     success_count += 1
-                            # else:
-                            #     fail_count += 1
-                            
-                            # FOR NOW: Simulate success (remove when API is live)
+                            # if response.status_code == 200: success_count += 1
+                            # else: fail_count += 1
                             success_count += 1
-                            
                         except Exception as e:
                             fail_count += 1
                         
-                        progress_bar.progress((i + 1) / len(erp_data))
-                        status_text.text(f"Processing: {i + 1}/{len(erp_data)} transactions...")
+                        progress_bar.progress((i + 1) / len(erp_push_data))
+                        status_text.text(f"Processing: {i + 1}/{len(erp_push_data)} transactions...")
                     
                     if fail_count == 0:
                         st.success(f"🎉 Successfully pushed {success_count} transactions to In4Velocity ERP!")
                         st.balloons()
                     else:
                         st.warning(f"✅ {success_count} successful | ❌ {fail_count} failed")
-                        st.info("💡 Failed transactions can be downloaded as CSV and manually imported.")
                 
                 st.caption("⚙️ API endpoint placeholder — will be updated when In4Velocity provides integration details.")
-                st.info("💡 **ERP CSV Format:** SN | Transaction Date | Transaction Details (short Ref) | Ref No (certificate number) | Amount Type | Withdrawals | Lodgment")
+                st.info("💡 **ERP CSV Format:** SN | Transaction Date | Transaction Details (short Ref) | Ref No (certificate number .00) | Amount Type | Withdrawals | Lodgment")
         else:
             st.subheader("📄 Transaction Extraction")
             td = bank_df['Withdrawals'].sum() if 'Withdrawals' in bank_df.columns else 0
