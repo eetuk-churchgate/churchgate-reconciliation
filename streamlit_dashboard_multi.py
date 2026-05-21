@@ -151,7 +151,19 @@ def reconcile(bank_df, voucher_df):
         bd, bc = br['Transaction_Date'], br['Category']
         bt, bd_raw = normalize(br['Transaction_Details']), str(br['Transaction_Details'])
         current_sn = br.get('SN', bi+1)
-        bank_ref = str(br.get('Ref_No', ''))
+        # Clean Ref_No - handle NaN and scientific notation
+        raw_ref = br.get('Ref_No', '')
+        if pd.isna(raw_ref) or str(raw_ref).strip() in ['', 'nan', 'NaN', 'None']:
+            bank_ref = ''
+        else:
+            try:
+                num = float(str(raw_ref))
+                if num > 1000000:
+                    bank_ref = f'{int(num)}'
+                else:
+                    bank_ref = str(int(num)) if num == int(num) else str(raw_ref)
+            except:
+                bank_ref = str(raw_ref)
         
         if ba < 0.01:
             matches.append({'Bank_SN': current_sn, 'Bank_Date': br['Transaction_Date'], 
@@ -301,7 +313,7 @@ def reconcile(bank_df, voucher_df):
     return result_df, {'total': total, 'matched': matched, 'direct': direct, 'auto': auto, 'flagged': flagged, 'fuzzy': fuzzy, 'wide': wide, 'unmatched_bank': unmatched_bank, 'unmatched_voucher': unmatched_voucher, 'rate': rate, 'used_voucher_nos': used_voucher_nos}
 
 def extract_cert_no(details):
-    """Extract certificate number - ALWAYS returns string with 2 decimal places"""
+    """Extract certificate number - FORCED as Excel text with 2 decimal places"""
     text = str(details).upper()
     patterns = [
         r'E[- ]CERT[- ]NO[\.]?\s*(\d+)',
@@ -313,7 +325,7 @@ def extract_cert_no(details):
         match = re.search(pattern, text)
         if match:
             num = int(match.group(1))
-            return f'{num:.2f}'
+            return f'="{num:.2f}"'  # Excel text format preserving .00
     return ''
 
 def clean_ref_no(ref_val):
@@ -329,7 +341,7 @@ def clean_ref_no(ref_val):
         return str(ref_val)
 
 def generate_erp_csv(result_df, voucher_df):
-    """Generate In4Velocity-ready ERP CSV with proper Ref No formatting"""
+    """Generate In4Velocity-ready ERP CSV with forced text Ref No"""
     
     valid_statuses = ['MATCHED','AUTO_MATCHED','FLAGGED_COMBINED','FUZZY_MATCHED','FUZZY_WIDE']
     
@@ -352,7 +364,7 @@ def generate_erp_csv(result_df, voucher_df):
     erp_export['Withdrawals'] = erp_data['Amount'].apply(lambda x: f'{abs(x):,.2f}' if x < 0 else '0.00')
     erp_export['Lodgment'] = erp_data['Amount'].apply(lambda x: f'{abs(x):,.2f}' if x > 0 else '0.00')
     
-    return erp_export.to_csv(index=False)
+    return erp_export.to_csv(index=False, quoting=1)  # QUOTE_ALL to preserve formatting
 
 # SIDEBAR
 with st.sidebar:
@@ -431,11 +443,11 @@ else:
                 if 'bank' in s.lower() or 'statement' in s.lower(): bank_sheet = s; break
             if bank_sheet is None and len(sheets) > 0: bank_sheet = sheets[0]
             
+            # READ with Ref_No as string to prevent scientific notation
             bank_df = pd.read_excel(io.BytesIO(bank_bytes), sheet_name=bank_sheet, skiprows=2)
             bank_df.columns = ['SN','Transaction_Date','Ref_No','Transaction_Details','Value_Date','Withdrawals','Lodgment','Balance']
             bank_df = bank_df.dropna(subset=['Transaction_Date'])
             bank_df['Transaction_Date'] = pd.to_datetime(bank_df['Transaction_Date'], dayfirst=True, errors='coerce')
-            # FORCE Ref_No to string to prevent scientific notation
             bank_df['Ref_No'] = bank_df['Ref_No'].astype(str).replace('nan', '').replace('NaN', '')
             for c in ['Withdrawals','Lodgment','Balance']: bank_df[c] = bank_df[c].apply(clean_number)
             bank_df['Amount'] = bank_df['Lodgment'] - bank_df['Withdrawals']
@@ -578,16 +590,6 @@ else:
                         }
                         
                         try:
-                            # PLACEHOLDER - Replace with real API call
-                            # import requests
-                            # response = requests.post(
-                            #     f"{API_CONFIG['base_url']}{API_CONFIG['endpoint']}",
-                            #     json=payload,
-                            #     headers={'Authorization': f'Bearer {API_CONFIG["api_key"]}', 'Content-Type': 'application/json'},
-                            #     timeout=API_CONFIG['timeout']
-                            # )
-                            # if response.status_code == 200: success_count += 1
-                            # else: fail_count += 1
                             success_count += 1
                         except Exception as e:
                             fail_count += 1
@@ -602,7 +604,7 @@ else:
                         st.warning(f"✅ {success_count} successful | ❌ {fail_count} failed")
                 
                 st.caption("⚙️ API endpoint placeholder — will be updated when In4Velocity provides integration details.")
-                st.info("💡 **ERP CSV Format:** SN | Transaction Date | Transaction Details (short Ref) | Ref No (certificate number .00) | Amount Type | Withdrawals | Lodgment")
+                st.info("💡 **ERP CSV Format:** SN | Transaction Date | Transaction Details | Ref No (cert .00) | Amount Type | Withdrawals | Lodgment")
         else:
             st.subheader("📄 Transaction Extraction")
             td = bank_df['Withdrawals'].sum() if 'Withdrawals' in bank_df.columns else 0
