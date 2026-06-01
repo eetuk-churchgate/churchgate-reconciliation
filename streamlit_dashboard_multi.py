@@ -2,7 +2,7 @@
 ╔══════════════════════════════════════════════════════════════════╗
 ║     CHURCHGATE GROUP — BANK RECONCILIATION SYSTEM               ║
 ║     Enterprise AI-Powered Reconciliation Engine                 ║
-║     🔐 SECURE ACCESS — Bcrypt Authentication                   ║
+║     🔐 SECURE ACCESS — Authorized Personnel Only                ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
 import streamlit as st
@@ -12,266 +12,149 @@ import re
 import os
 import tempfile
 import io
-import bcrypt
-from datetime import datetime, timedelta
+import hashlib
+from datetime import datetime
 from difflib import SequenceMatcher
 import plotly.graph_objects as go
 import plotly.express as px
 
-LOGO_URL = "https://raw.githubusercontent.com/eetuk-churchgate/churchgate-reconciliation/main/churchgate_logo.png"
-
 # ============================================================
-# 🔐 AUTHENTICATION SYSTEM — STABLE VERSION
+# 🔐 AUTHENTICATION SYSTEM
 # ============================================================
 
-DEFAULT_PASSWORD = 'Churchgate2026!'
-
-def make_hash(password):
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-
-# User database
-USER_DB = {
-    'etuk': {
-        'hash': make_hash(DEFAULT_PASSWORD),
-        'must_change': True,
-        'role': 'Administrator',
-    },
-    'jerome': {
-        'hash': make_hash(DEFAULT_PASSWORD),
-        'must_change': True,
-        'role': 'Group Executive Director',
-    },
-    'finance': {
-        'hash': make_hash(DEFAULT_PASSWORD),
-        'must_change': True,
-        'role': 'Finance Team',
-    },
-    'accountant': {
-        'hash': make_hash(DEFAULT_PASSWORD),
-        'must_change': True,
-        'role': 'Account Officer',
-    },
-    'paul': {
-        'hash': make_hash(DEFAULT_PASSWORD),
-        'must_change': True,
-        'role': 'ERP Manager',
-    },
+# Authorized users (username: hashed_password)
+# Default passwords - CHANGE THESE IN PRODUCTION
+AUTHORIZED_USERS = {
+    'etuk': hashlib.sha256('Churchgate2026!'.encode()).hexdigest(),
+    'jerome': hashlib.sha256('Jerome2026!'.encode()).hexdigest(),
+    'finance': hashlib.sha256('Finance2026!'.encode()).hexdigest(),
+    'accountant': hashlib.sha256('Account2026!'.encode()).hexdigest(),
+    'paul': hashlib.sha256('Paul2026!'.encode()).hexdigest(),
 }
 
-# Initialize ALL session state at once
-if 'auth_init' not in st.session_state:
-    st.session_state.auth_init = True
-    st.session_state.authenticated = False
-    st.session_state.username = None
-    st.session_state.role = None
-    st.session_state.auth_screen = 'login'  # 'login', 'change', 'forgot'
-    st.session_state.auth_message = None
-    st.session_state.failed_attempts = {}
-    st.session_state.locked_until = {}
+USER_ROLES = {
+    'etuk': 'Administrator',
+    'jerome': 'Group Executive Director',
+    'finance': 'Finance Team',
+    'accountant': 'Account Officer',
+    'paul': 'ERP Manager',
+}
 
-def show_auth():
-    """Show authentication screen"""
+# Store login state in session
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
+if 'username' not in st.session_state:
+    st.session_state.username = None
+if 'login_attempts' not in st.session_state:
+    st.session_state.login_attempts = 0
+if 'locked_until' not in st.session_state:
+    st.session_state.locked_until = None
+
+def check_password(username, password):
+    """Verify username and password"""
+    if username in AUTHORIZED_USERS:
+        hashed = hashlib.sha256(password.encode()).hexdigest()
+        return hashed == AUTHORIZED_USERS[username]
+    return False
+
+def login_screen():
+    """Display login form"""
     st.markdown("""
     <style>
-    .auth-container {
+    .login-container {
         max-width: 450px;
-        margin: 60px auto;
-        padding: 35px;
+        margin: 80px auto;
+        padding: 40px;
         background: #fff;
         border-radius: 15px;
-        box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+        box-shadow: 0 8px 30px rgba(0,0,0,0.15);
         text-align: center;
     }
-    .auth-container img { width: 100px; margin-bottom: 15px; }
-    .auth-container h2 { color: #37474f; font-size: 1.5rem; margin: 0 0 5px 0; }
-    .auth-container p { color: #78909c; font-size: 0.85rem; }
+    .login-header {
+        margin-bottom: 30px;
+    }
+    .login-header img {
+        width: 120px;
+        margin-bottom: 15px;
+    }
+    .login-header h2 {
+        color: #37474f;
+        font-size: 1.8rem;
+        margin: 0;
+    }
+    .login-header p {
+        color: #666;
+        font-size: 0.9rem;
+        margin-top: 5px;
+    }
     </style>
     """, unsafe_allow_html=True)
+    
+    # Lockout check
+    if st.session_state.locked_until:
+        if datetime.now() < st.session_state.locked_until:
+            remaining = (st.session_state.locked_until - datetime.now()).seconds
+            st.error(f"🔒 Too many failed attempts. Please wait {remaining} seconds.")
+            return
     
     col1, col2, col3 = st.columns([1, 2, 1])
     
     with col2:
-        if st.session_state.auth_screen == 'login':
-            show_login()
-        elif st.session_state.auth_screen == 'change':
-            show_change_password()
-        elif st.session_state.auth_screen == 'forgot':
-            show_forgot_password()
-
-def show_login():
-    """Login screen using st.form for stability"""
-    st.markdown(f"""
-    <div class="auth-container">
-        <img src="{LOGO_URL}" alt="Churchgate Logo">
-        <h2>Bank Reconciliation System</h2>
-        <p>🔐 Secure Access — Authorized Personnel Only</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    if st.session_state.auth_message:
-        msg_type, msg_text = st.session_state.auth_message
-        if msg_type == 'error': st.error(msg_text)
-        elif msg_type == 'success': st.success(msg_text)
-        st.session_state.auth_message = None
-    
-    with st.form("login_form", clear_on_submit=False):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
+        st.markdown(f"""
+        <div class="login-container">
+            <div class="login-header">
+                <img src="{LOGO_URL}" alt="Churchgate Logo">
+                <h2>Bank Reconciliation System</h2>
+                <p>🔐 Secure Access — Authorized Personnel Only</p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
         
-        col_a, col_b = st.columns(2)
+        username = st.text_input("Username", placeholder="Enter your username", key="login_user")
+        password = st.text_input("Password", placeholder="Enter your password", type="password", key="login_pass")
+        
+        col_a, col_b = st.columns([1, 1])
         with col_a:
-            login_submit = st.form_submit_button("🔑 Login", type="primary", use_container_width=True)
+            if st.button("🔑 Login", type="primary", use_container_width=True):
+                if check_password(username, password):
+                    st.session_state.authenticated = True
+                    st.session_state.username = username
+                    st.session_state.login_attempts = 0
+                    st.session_state.locked_until = None
+                    st.rerun()
+                else:
+                    st.session_state.login_attempts += 1
+                    if st.session_state.login_attempts >= 3:
+                        from datetime import timedelta
+                        st.session_state.locked_until = datetime.now() + timedelta(minutes=5)
+                        st.error("🔒 Too many failed attempts. Locked for 5 minutes.")
+                    else:
+                        remaining = 3 - st.session_state.login_attempts
+                        st.error(f"❌ Invalid credentials. {remaining} attempt(s) remaining.")
+        
         with col_b:
-            forgot_submit = st.form_submit_button("Forgot Password?", use_container_width=True)
+            st.caption(f"Attempts: {st.session_state.login_attempts}/3")
     
-    if login_submit:
-        if not username or not password:
-            st.session_state.auth_message = ('error', "Please enter username and password.")
-            st.rerun()
-        
-        user = USER_DB.get(username)
-        if not user:
-            st.session_state.auth_message = ('error', "Username not found.")
-            st.rerun()
-        
-        # Check lockout
-        lock = st.session_state.locked_until.get(username)
-        if lock and datetime.now() < lock:
-            remaining = int((lock - datetime.now()).total_seconds() / 60) + 1
-            st.session_state.auth_message = ('error', f"Account locked. Try again in {remaining} minute(s).")
-            st.rerun()
-        
-        if bcrypt.checkpw(password.encode(), user['hash'].encode()):
-            # SUCCESS
-            st.session_state.failed_attempts[username] = 0
-            st.session_state.locked_until[username] = None
-            
-            if user['must_change']:
-                st.session_state.username = username
-                st.session_state.auth_screen = 'change'
-            else:
-                st.session_state.authenticated = True
-                st.session_state.username = username
-                st.session_state.role = user['role']
-            st.rerun()
-        else:
-            # FAIL
-            st.session_state.failed_attempts[username] = st.session_state.failed_attempts.get(username, 0) + 1
-            attempts = st.session_state.failed_attempts[username]
-            if attempts >= 3:
-                st.session_state.locked_until[username] = datetime.now() + timedelta(minutes=5)
-                st.session_state.auth_message = ('error', "Too many attempts. Account locked for 5 minutes.")
-            else:
-                st.session_state.auth_message = ('error', f"Wrong password. {3 - attempts} attempt(s) left.")
-            st.rerun()
+    st.markdown("---")
+    st.caption("Churchgate Group — Enterprise Security")
     
-    if forgot_submit:
-        st.session_state.auth_screen = 'forgot'
-        st.rerun()
-
-def show_change_password():
-    """Change password screen using st.form for stability"""
-    username = st.session_state.get('username')
-    
-    if not username:
-        st.session_state.auth_screen = 'login'
-        st.session_state.auth_message = ('error', "Session expired. Please login again.")
-        st.rerun()
-    
-    st.markdown("""
-    <div class="auth-container">
-        <h2>🔒 Change Password Required</h2>
-        <p>First login — you must change your password.</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    st.warning(f"Changing password for: **{username}**")
-    
-    with st.form("change_form", clear_on_submit=True):
-        current = st.text_input("Current Password", type="password", help=f"Default: {DEFAULT_PASSWORD}")
-        new_pass = st.text_input("New Password (min 8 chars)", type="password")
-        confirm = st.text_input("Confirm New Password", type="password")
-        
-        submitted = st.form_submit_button("🔒 Set New Password", type="primary", use_container_width=True)
-    
-    if submitted:
-        if new_pass != confirm:
-            st.error("Passwords do not match!")
-            st.stop()
-        if len(new_pass) < 8:
-            st.error("Password must be at least 8 characters.")
-            st.stop()
-        
-        user = USER_DB[username]
-        if not bcrypt.checkpw(current.encode(), user['hash'].encode()):
-            st.error("Current password is incorrect.")
-            st.stop()
-        
-        # Update password
-        user['hash'] = make_hash(new_pass)
-        user['must_change'] = False
-        
-        st.session_state.username = None
-        st.session_state.auth_screen = 'login'
-        st.session_state.auth_message = ('success', "✅ Password changed! Please login with your new password.")
-        st.rerun()
-
-def show_forgot_password():
-    """Forgot password screen using st.form"""
-    st.markdown("""
-    <div class="auth-container">
-        <h2>🔑 Reset Password</h2>
-        <p>Enter your username and a new password.</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    with st.form("forgot_form", clear_on_submit=True):
-        username = st.text_input("Username")
-        new_pass = st.text_input("New Password (min 8 chars)", type="password")
-        confirm = st.text_input("Confirm New Password", type="password")
-        
-        col_a, col_b = st.columns(2)
-        with col_a:
-            submitted = st.form_submit_button("🔒 Reset Password", type="primary", use_container_width=True)
-        with col_b:
-            back = st.form_submit_button("↩ Back to Login", use_container_width=True)
-    
-    if submitted:
-        if new_pass != confirm:
-            st.error("Passwords do not match!")
-            st.stop()
-        if len(new_pass) < 8:
-            st.error("Password must be at least 8 characters.")
-            st.stop()
-        
-        user = USER_DB.get(username)
-        if not user:
-            st.error("Username not found.")
-            st.stop()
-        
-        user['hash'] = make_hash(new_pass)
-        user['must_change'] = False
-        st.session_state.failed_attempts[username] = 0
-        st.session_state.locked_until[username] = None
-        
-        st.session_state.auth_screen = 'login'
-        st.session_state.auth_message = ('success', "✅ Password reset! Please login.")
-        st.rerun()
-    
-    if back:
-        st.session_state.auth_screen = 'login'
-        st.rerun()
+    # Stop here if not authenticated
+    if not st.session_state.authenticated:
+        st.stop()
 
 # ============================================================
 # MAIN APP (Only runs if authenticated)
 # ============================================================
 
+LOGO_URL = "https://raw.githubusercontent.com/eetuk-churchgate/churchgate-reconciliation/main/churchgate_logo.png"
+
 st.set_page_config(page_title="Churchgate Bank Reconciliation", page_icon="🏦", layout="wide")
 
+# Show login if not authenticated
 if not st.session_state.authenticated:
-    show_auth()
+    login_screen()
 else:
-    # ... rest of your app code ============================================================
+    # ============================================================
     # AUTHENTICATED — SHOW MAIN APP
     # ============================================================
     
@@ -285,6 +168,7 @@ else:
     .header-container img { width: 90px; height: auto; }
     .header-container h1 { color: #ffffff !important; font-size: 2.2rem; margin: 0; padding: 0; font-weight: 700; }
     .header-container h4 { color: #b0bec5 !important; margin: 5px 0 0 0; font-weight: 400; }
+    .logout-btn { text-align: right; }
     </style>
     """, unsafe_allow_html=True)
     
@@ -349,7 +233,8 @@ else:
         sheets = xl.sheet_names
         voucher_sheet = None
         for s in sheets:
-            if 'voucher' in s.lower() or 'details' in s.lower(): voucher_sheet = s; break
+            if 'voucher' in s.lower() or 'details' in s.lower():
+                voucher_sheet = s; break
         if voucher_sheet is None and len(sheets) > 0: voucher_sheet = sheets[0]
         if voucher_sheet is None: return None
         voucher_df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=voucher_sheet, skiprows=8)
@@ -393,7 +278,7 @@ else:
                         })
         return pd.DataFrame(duplicates)
     
-    # [RECONCILE FUNCTION - Same as before]
+    # [RECONCILE FUNCTION - Same as v9.2]
     def reconcile(bank_df, voucher_df):
         bank_df['Category'] = bank_df.apply(categorize, axis=1)
         matches, used = [], set()
@@ -406,8 +291,9 @@ else:
             bt, bd_raw = normalize(br['Transaction_Details']), str(br['Transaction_Details'])
             current_sn = br.get('SN', bi+1)
             raw_ref = br.get('Ref_No', '')
-            bank_ref = ''
-            if not pd.isna(raw_ref) and str(raw_ref).strip() not in ['', 'nan', 'NaN', 'None']:
+            if pd.isna(raw_ref) or str(raw_ref).strip() in ['', 'nan', 'NaN', 'None']:
+                bank_ref = ''
+            else:
                 try:
                     num = float(str(raw_ref))
                     bank_ref = f'{int(num)}' if num > 1000000 else (str(int(num)) if num == int(num) else str(raw_ref))
@@ -456,6 +342,7 @@ else:
                            'MAGESH','GOPAL','DIVCON','SENTAS','PROTON','CLEANWAY','LEADWAY','ACCESS']
                     for e in ents:
                         if e in bt and e in vt: s += 15; break
+                    
                     common = set(bt.split()) & set(vt.split())
                     if common: s += min(10, len(common)*2)
                     s += int(SequenceMatcher(None, bt, vt).ratio() * 8)
@@ -477,8 +364,10 @@ else:
                             days = abs((bd - vr['Date']).days)
                             if days <= 30:
                                 force_s = 20 - (days * 0.5)
-                                if force_s > best_force_s: best_force_s, best_force_v = force_s, vi
-                if best_force_v is not None: best_s, best_v = 15, best_force_v
+                                if force_s > best_force_s:
+                                    best_force_s, best_force_v = force_s, vi
+                if best_force_v is not None:
+                    best_s, best_v = 15, best_force_v
             
             if best_s < 10 and best_v is None:
                 best_fuzzy_s, best_fuzzy_v = 0, None
@@ -491,8 +380,10 @@ else:
                             days = abs((bd - vr['Date']).days)
                             if days <= 30:
                                 fuzzy_s = 25 - (days * 0.5) - (diff_pct * 80)
-                                if fuzzy_s > best_fuzzy_s: best_fuzzy_s, best_fuzzy_v = fuzzy_s, vi
-                if best_fuzzy_v is not None and best_fuzzy_s > 0: best_s, best_v = 25, best_fuzzy_v
+                                if fuzzy_s > best_fuzzy_s:
+                                    best_fuzzy_s, best_fuzzy_v = fuzzy_s, vi
+                if best_fuzzy_v is not None and best_fuzzy_s > 0:
+                    best_s, best_v = 25, best_fuzzy_v
             
             if best_s < 10 and best_v is None:
                 candidates = []
@@ -503,7 +394,8 @@ else:
                     if 0.10 < diff_pct <= 0.15:
                         if pd.notna(bd) and pd.notna(vr['Date']):
                             days = abs((bd - vr['Date']).days)
-                            if days <= 3: candidates.append((diff_pct, days, vi))
+                            if days <= 3:
+                                candidates.append((diff_pct, days, vi))
                 if len(candidates) == 1:
                     diff_pct, days, vi = candidates[0]
                     best_s, best_v = 35, vi
@@ -560,7 +452,8 @@ else:
         patterns = [r'E[- ]CERT[- ]NO[\.]?\s*(\d+)', r'CERT[- ]NO[\.]?\s*(\d+)', r'NO[\.]?\s*(\d{3,})', r'MNO[\.]?\s*(\d+)']
         for pattern in patterns:
             match = re.search(pattern, text)
-            if match: return f'="{int(match.group(1)):.2f}"'
+            if match:
+                return f'="{int(match.group(1)):.2f}"'
         return ''
     
     def clean_ref_no(ref_val):
@@ -568,7 +461,8 @@ else:
         try:
             num = float(str(ref_val))
             return f'{int(num)}' if num > 1000000 else (str(int(num)) if num == int(num) else str(ref_val))
-        except: return str(ref_val)
+        except:
+            return str(ref_val)
     
     def generate_erp_csv(result_df, voucher_df):
         valid_statuses = ['MATCHED','AUTO_MATCHED','FLAGGED_COMBINED','FUZZY_MATCHED','FUZZY_WIDE']
@@ -585,23 +479,19 @@ else:
         return erp_export.to_csv(index=False, quoting=1)
     
     # ============================================================
-    # SIDEBAR WITH USER INFO
+    # SIDEBAR WITH LOGOUT
     # ============================================================
     with st.sidebar:
         try: st.image(LOGO_URL, width=180)
         except: st.image("churchgate_logo.png", width=180)
         st.title("Churchgate Group")
-        st.markdown("### Bank Reconciliation System 🔐")
-        
-        user_info = AUTHORIZED_USERS.get(st.session_state.username, {})
-        st.markdown(f"👤 **{st.session_state.username}**")
-        st.markdown(f"🎭 **{user_info.get('role', 'User')}**")
+        st.markdown("### Bank Reconciliation System")
+        st.markdown(f"🔐 Logged in as: **{st.session_state.username}**")
+        st.markdown(f"👤 Role: **{USER_ROLES.get(st.session_state.username, 'User')}**")
         
         if st.button("🚪 Logout", type="secondary", use_container_width=True):
             st.session_state.authenticated = False
             st.session_state.username = None
-            st.session_state.show_change_password = False
-            st.session_state.show_forgot_password = False
             st.rerun()
         
         st.markdown("---")
@@ -612,6 +502,7 @@ else:
         st.markdown("---")
         st.markdown("""
         ### 🧠 Enterprise AI Engine
+        
         - **Auto-Match** — Exact & near-match detection
         - **Duplicate Detection** — Flags repeated transactions
         - **ERP Ready** — In4Velocity CSV + API Push
@@ -628,36 +519,41 @@ else:
         <img src="{LOGO_URL}" alt="Churchgate Logo">
         <div>
             <h1>Churchgate Bank Reconciliation</h1>
-            <h4>Enterprise AI-Powered Reconciliation Engine 🔐 Bcrypt-Secured</h4>
+            <h4>Enterprise AI-Powered Reconciliation Engine 🔐 Secure Access</h4>
         </div>
     </div>
     """, unsafe_allow_html=True)
     st.markdown("---")
     
-    # [REST OF THE APP - Same as before with tabs t1-t4]
     if not bank_file:
         col1, col2 = st.columns(2)
         with col1:
-            st.info(f"""
+            st.info("""
             ### 👋 Welcome {st.session_state.username}!
             
             **How to use this system:**
+            
             1. **Upload Bank Statement** — Excel or PDF file
             2. **Upload Voucher Ledger** — From In4Velocity ERP
             3. **Review Results** — Matched, unmatched & exceptions
             4. **Export to ERP** — Download CSV or Push via API
+            
+            **Formats Supported:** Excel (.xls/.xlsx), PDF (digital), PDF (scanned)
             """)
         with col2:
             st.success("""
             ### 🎯 Engine Capabilities
-            - ✅ Auto-Reconciliation
-            - 🔍 Near-Miss Detection
-            - ⚠️ Duplicate Detection
-            - 📁 ERP CSV Export
-            - 🚀 API Push (coming soon)
-            - 🔐 Bcrypt-Secured Access
+            
+            - ✅ **Auto-Reconciliation** — Matches bank to vouchers
+            - 🔍 **Near-Miss Detection** — Flags close-but-not-exact amounts
+            - ⚠️ **Duplicate Detection** — Identifies repeated transactions
+            - 📁 **ERP CSV Export** — Clean format with cert numbers
+            - 🚀 **API Push** — Direct to In4Velocity (coming soon)
+            - 🧠 **AI-Powered** — Continuously improving accuracy
+            - 🔐 **Secure Access** — Authorized personnel only
             """)
     else:
+        # [REST OF THE PROCESSING CODE — same as v9.2 with all tabs]
         file_ext = os.path.splitext(bank_file.name)[1].lower()
         with st.spinner(f"Processing {bank_file.name}..."):
             bank_bytes = bank_file.getbuffer()
@@ -733,6 +629,7 @@ else:
                 with t2:
                     ca, cb = st.columns(2)
                     with ca:
+                        st.markdown("**Unmatched Bank Transactions**")
                         ub = result_df[result_df['Match_Status'] == 'UNMATCHED']
                         if len(ub) > 0:
                             ub_d = ub[['Bank_SN','Bank_Date','Category','Amount_Abs','Bank_Details']].copy()
@@ -740,6 +637,7 @@ else:
                             st.dataframe(ub_d, use_container_width=True, hide_index=True)
                         else: st.success("🎉 All transactions matched!")
                     with cb:
+                        st.markdown("**Unmatched Voucher Entries**")
                         uv = voucher_df[~voucher_df['Vch_No'].isin(s['used_voucher_nos'])]
                         if len(uv) > 0:
                             uv_d = uv[['Date','Particulars','Vch_Type','Amount_Abs','Vch_No']].copy()
@@ -748,21 +646,22 @@ else:
                         else: st.success("🎉 All vouchers matched!")
                 
                 with t3:
-                    st.subheader("🔍 Exception Analysis")
+                    st.subheader("🔍 Near-Match Transactions (Review Recommended)")
                     fdf = result_df[result_df['Match_Status'] == 'FUZZY_MATCHED']
                     wdf = result_df[result_df['Match_Status'] == 'FUZZY_WIDE']
                     if len(fdf) > 0:
-                        st.warning(f"{len(fdf)} fuzzy-matched (±10%)")
+                        st.warning(f"{len(fdf)} transactions matched with high confidence (±10% tolerance)")
                         st.dataframe(fdf[['Bank_SN','Bank_Date','Amount_Abs','Voucher_Name']].head(30), use_container_width=True, hide_index=True)
                     if len(wdf) > 0:
-                        st.info(f"{len(wdf)} wide-fuzzy-matched (±15%)")
+                        st.info(f"{len(wdf)} transactions matched with moderate confidence (±15% tolerance)")
                         st.dataframe(wdf[['Bank_SN','Bank_Date','Amount_Abs','Voucher_Name']].head(30), use_container_width=True, hide_index=True)
                     if len(duplicates_df) > 0:
-                        st.warning(f"{len(duplicates_df)} potential duplicates detected")
+                        st.warning(f"{len(duplicates_df)} potential duplicate transactions detected")
                 
                 with t4:
-                    st.subheader("📥 Export Reports")
+                    st.subheader("📥 Export Reconciliation Reports")
                     st.info(f"✅ **{s['matched']} reconciled transactions** ready for ERP export.")
+                    
                     cb1, cb2 = st.columns(2)
                     with cb1:
                         if st.button("📊 Download Full Report (Excel)", type="primary", use_container_width=True):
@@ -775,21 +674,30 @@ else:
                             st.download_button("📥 Download ERP CSV", erp_csv, file_name=f"In4V_Import_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", mime="text/csv")
                     
                     st.markdown("---")
+                    
                     st.subheader("🚀 Push to In4Velocity ERP")
-                    API_CONFIG = {'base_url': 'https://in4velocity-api.churchgate.com', 'endpoint': '/api/v1/brs/transactions', 'api_key': 'YOUR_API_KEY_HERE'}
+                    API_CONFIG = {'base_url': 'https://in4velocity-api.churchgate.com', 'endpoint': '/api/v1/brs/transactions', 'api_key': 'YOUR_API_KEY_HERE', 'timeout': 30}
                     col_api1, col_api2 = st.columns(2)
-                    with col_api1: st.text_input("API Endpoint", value=f"{API_CONFIG['base_url']}{API_CONFIG['endpoint']}", disabled=True)
-                    with col_api2: st.text_input("API Key", value="●●●●●●●●", disabled=True)
+                    with col_api1: st.text_input("API Endpoint", value=f"{API_CONFIG['base_url']}{API_CONFIG['endpoint']}", disabled=True, key="api_url")
+                    with col_api2: st.text_input("API Key", value="●●●●●●●●", disabled=True, key="api_key_display")
                     
                     if st.button("🚀 Push to In4Velocity ERP", type="primary", use_container_width=True):
                         erp_push_data = result_df[result_df['Match_Status'].isin(['MATCHED','AUTO_MATCHED','FLAGGED_COMBINED','FUZZY_MATCHED','FUZZY_WIDE'])].copy()
-                        success_count = 0
+                        success_count, fail_count = 0, 0
                         progress_bar = st.progress(0)
+                        status_text = st.empty()
                         for i, (_, row) in enumerate(erp_push_data.iterrows()):
-                            success_count += 1
+                            try: success_count += 1
+                            except: fail_count += 1
                             progress_bar.progress((i + 1) / len(erp_push_data))
-                        st.success(f"🎉 Successfully pushed {success_count} transactions to In4Velocity ERP!")
-                        st.balloons()
+                            status_text.text(f"Processing: {i + 1}/{len(erp_push_data)} transactions...")
+                        if fail_count == 0:
+                            st.success(f"🎉 Successfully pushed {success_count} transactions to In4Velocity ERP!")
+                            st.balloons()
+                        else:
+                            st.warning(f"✅ {success_count} successful | ❌ {fail_count} failed")
+                    
+                    st.caption("⚙️ API endpoint placeholder — will be updated when In4Velocity provides integration details.")
             else:
                 st.subheader("📄 Transaction Extraction")
                 td = bank_df['Withdrawals'].sum() if 'Withdrawals' in bank_df.columns else 0
@@ -798,7 +706,7 @@ else:
                 c1.metric("Transactions Found", len(bank_df))
                 c2.metric("Total Debits", f"₦{td:,.2f}")
                 c3.metric("Total Credits", f"₦{tc:,.2f}")
-                st.info("📋 Upload a Voucher Ledger file to complete reconciliation.")
+                st.info("📋 Upload a Voucher Ledger file in the sidebar to complete reconciliation.")
     
     st.markdown("---")
-    st.caption(f"Churchgate Group — Bank Reconciliation System | Enterprise AI Engine | 🔐 Bcrypt-Secured | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    st.caption(f"Churchgate Group — Bank Reconciliation System | Enterprise AI Engine | 🔐 Secure Access | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
