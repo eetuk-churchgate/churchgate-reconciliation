@@ -208,22 +208,26 @@ def show_login_form():
             
             if status == "locked":
                 st.session_state.login_message = ('error', "🔒 Account locked. Try again in 5 minutes.")
+                st.rerun()
             elif status == "wrong":
                 attempts = FAILED_ATTEMPTS.get(username, 0)
                 remaining = 3 - attempts
                 st.session_state.login_message = ('error', f"❌ Wrong password. {remaining} attempt(s) left.")
+                st.rerun()
             elif status == "invalid":
                 st.session_state.login_message = ('error', "❌ Username not found.")
+                st.rerun()
             elif status == "success":
-                st.session_state.authenticated = True
+                # Store username FIRST, then check must_change
                 st.session_state.username = username
+                st.session_state.authenticated = True
                 
                 if AUTHORIZED_USERS[username]['must_change']:
                     st.session_state.current_screen = 'change_password'
                 else:
                     st.session_state.login_message = ('success', f"✅ Welcome, {username}!")
-            
-            st.rerun()
+                
+                st.rerun()
     
     if forgot_clicked:
         st.session_state.current_screen = 'forgot_password'
@@ -240,6 +244,17 @@ def show_change_password_form():
     
     st.warning("⚠️ First login requires a password change.")
     
+    # Get the username from session state
+    username = st.session_state.get('username', None)
+    
+    if not username:
+        st.error("Session expired. Please login again.")
+        st.session_state.authenticated = False
+        st.session_state.current_screen = 'login'
+        if st.button("↩ Return to Login", use_container_width=True):
+            st.rerun()
+        return
+    
     current_password = st.text_input("Current Password", type="password", key="cp_current",
                                      help=f"Default: {DEFAULT_PASSWORD}")
     new_password = st.text_input("New Password (min 8 characters)", type="password", key="cp_new")
@@ -253,7 +268,7 @@ def show_change_password_form():
         elif len(new_password) < 8:
             st.error("Password must be at least 8 characters")
         else:
-            success, message = change_password(st.session_state.username, current_password, new_password)
+            success, message = change_password(username, current_password, new_password)
             if success:
                 st.session_state.current_screen = 'login'
                 st.session_state.authenticated = False
