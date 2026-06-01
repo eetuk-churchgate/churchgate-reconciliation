@@ -192,7 +192,6 @@ def show_login_form():
     col_a, col_b = st.columns(2)
     with col_a:
         login_clicked = st.button("🔑 Login", type="primary", use_container_width=True, key="btn_login")
-    
     with col_b:
         forgot_clicked = st.button("🔑 Forgot Password?", use_container_width=True, key="btn_forgot")
     
@@ -218,23 +217,26 @@ def show_login_form():
                 st.session_state.login_message = ('error', "❌ Username not found.")
                 st.rerun()
             elif status == "success":
-                # Store username FIRST, then check must_change
-                st.session_state.username = username
-                st.session_state.authenticated = True
-                
                 if AUTHORIZED_USERS[username]['must_change']:
+                    # PASS USERNAME VIA QUERY PARAM
+                    st.session_state.temp_username = username
                     st.session_state.current_screen = 'change_password'
                 else:
+                    st.session_state.authenticated = True
+                    st.session_state.username = username
                     st.session_state.login_message = ('success', f"✅ Welcome, {username}!")
-                
                 st.rerun()
+    
+    if forgot_clicked:
+        st.session_state.current_screen = 'forgot_password'
+        st.rerun()
     
     if forgot_clicked:
         st.session_state.current_screen = 'forgot_password'
         st.rerun()
 
 def show_change_password_form():
-    """Change password form (works with any special characters)"""
+    """Change password form"""
     st.markdown("""
     <div class="login-box">
         <h2>🔒 Change Password Required</h2>
@@ -244,12 +246,11 @@ def show_change_password_form():
     
     st.warning("⚠️ First login requires a password change.")
     
-    # Get the username from session state
-    username = st.session_state.get('username', None)
+    # Get username from temp storage
+    username = st.session_state.get('temp_username', None)
     
     if not username:
         st.error("Session expired. Please login again.")
-        st.session_state.authenticated = False
         st.session_state.current_screen = 'login'
         if st.button("↩ Return to Login", use_container_width=True):
             st.rerun()
@@ -270,9 +271,8 @@ def show_change_password_form():
         else:
             success, message = change_password(username, current_password, new_password)
             if success:
+                st.session_state.temp_username = None
                 st.session_state.current_screen = 'login'
-                st.session_state.authenticated = False
-                st.session_state.username = None
                 st.session_state.login_message = ('success', message)
                 st.rerun()
             else:
