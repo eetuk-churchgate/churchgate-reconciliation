@@ -21,87 +21,85 @@ import plotly.express as px
 LOGO_URL = "https://raw.githubusercontent.com/eetuk-churchgate/churchgate-reconciliation/main/churchgate_logo.png"
 
 # ============================================================
-# 🔐 AUTHENTICATION SYSTEM (Bcrypt + Force Password Change)
+# 🔐 AUTHENTICATION SYSTEM (FIXED)
 # ============================================================
 
-# Default passwords hashed with bcrypt (these are one-time passwords)
-# Users MUST change password on first login
-DEFAULT_PASSWORD_HASH = bcrypt.hashpw('Churchgate2026!'.encode(), bcrypt.gensalt()).decode()
+# Default password hashed with bcrypt
+DEFAULT_PASSWORD = 'Churchgate2026!'
+DEFAULT_PASSWORD_HASH = bcrypt.hashpw(DEFAULT_PASSWORD.encode(), bcrypt.gensalt()).decode()
 
 AUTHORIZED_USERS = {
     'etuk': {
         'password_hash': DEFAULT_PASSWORD_HASH,
-        'must_change': True,  # Force password change on first login
+        'must_change': True,
         'role': 'Administrator',
         'email': 'eetuk@churchgate.com',
-        'failed_attempts': 0,
-        'locked_until': None,
     },
     'jerome': {
         'password_hash': DEFAULT_PASSWORD_HASH,
         'must_change': True,
         'role': 'Group Executive Director',
         'email': 'jeromedas@churchgate.com',
-        'failed_attempts': 0,
-        'locked_until': None,
     },
     'finance': {
         'password_hash': DEFAULT_PASSWORD_HASH,
         'must_change': True,
         'role': 'Finance Team',
         'email': 'finance@churchgate.com',
-        'failed_attempts': 0,
-        'locked_until': None,
     },
     'accountant': {
         'password_hash': DEFAULT_PASSWORD_HASH,
         'must_change': True,
         'role': 'Account Officer',
         'email': 'accountant@churchgate.com',
-        'failed_attempts': 0,
-        'locked_until': None,
     },
     'paul': {
         'password_hash': DEFAULT_PASSWORD_HASH,
         'must_change': True,
         'role': 'ERP Manager',
         'email': 'pfade@churchgate.com',
-        'failed_attempts': 0,
-        'locked_until': None,
     },
 }
+
+# Track failed attempts (reset on restart - acceptable for MVP)
+FAILED_ATTEMPTS = {}
+LOCKED_UNTIL = {}
 
 # Initialize session state
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 if 'username' not in st.session_state:
     st.session_state.username = None
-if 'show_forgot_password' not in st.session_state:
-    st.session_state.show_forgot_password = False
-if 'show_change_password' not in st.session_state:
-    st.session_state.show_change_password = False
+if 'current_screen' not in st.session_state:
+    st.session_state.current_screen = 'login'  # 'login', 'change_password', 'forgot_password'
 if 'login_message' not in st.session_state:
     st.session_state.login_message = None
 
 def verify_password(username, password):
     """Verify password using bcrypt"""
-    if username in AUTHORIZED_USERS:
-        user = AUTHORIZED_USERS[username]
-        # Check lockout
-        if user['locked_until'] and datetime.now() < user['locked_until']:
+    if username not in AUTHORIZED_USERS:
+        return False, "invalid"
+    
+    # Check lockout
+    if username in LOCKED_UNTIL and LOCKED_UNTIL[username]:
+        if datetime.now() < LOCKED_UNTIL[username]:
             return False, "locked"
-        # Verify with bcrypt
-        if bcrypt.checkpw(password.encode(), user['password_hash'].encode()):
-            user['failed_attempts'] = 0
-            user['locked_until'] = None
-            return True, "success"
         else:
-            user['failed_attempts'] += 1
-            if user['failed_attempts'] >= 3:
-                user['locked_until'] = datetime.now() + timedelta(minutes=5)
-                return False, "locked"
-            return False, "wrong"
-    return False, "invalid"
+            LOCKED_UNTIL[username] = None
+            FAILED_ATTEMPTS[username] = 0
+    
+    user = AUTHORIZED_USERS[username]
+    
+    if bcrypt.checkpw(password.encode(), user['password_hash'].encode()):
+        FAILED_ATTEMPTS[username] = 0
+        LOCKED_UNTIL[username] = None
+        return True, "success"
+    else:
+        FAILED_ATTEMPTS[username] = FAILED_ATTEMPTS.get(username, 0) + 1
+        if FAILED_ATTEMPTS[username] >= 3:
+            LOCKED_UNTIL[username] = datetime.now() + timedelta(minutes=5)
+            return False, "locked"
+        return False, "wrong"
 
 def change_password(username, old_password, new_password):
     """Change user password with bcrypt"""
@@ -123,15 +121,13 @@ def change_password(username, old_password, new_password):
         return False, "Password must contain at least one lowercase letter"
     if not re.search(r'[0-9]', new_password):
         return False, "Password must contain at least one number"
-    if not re.search(r'[!@#$%^&*(),.?":{}|<>]', new_password):
-        return False, "Password must contain at least one special character"
     
     # Hash new password with bcrypt
     new_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
     user['password_hash'] = new_hash
     user['must_change'] = False
     
-    return True, "Password changed successfully"
+    return True, "Password changed successfully! Please login with your new password."
 
 def reset_password(username, new_password):
     """Reset password (forgot password flow)"""
@@ -140,229 +136,176 @@ def reset_password(username, new_password):
     
     user = AUTHORIZED_USERS[username]
     
-    # Validate new password strength
     if len(new_password) < 8:
         return False, "Password must be at least 8 characters"
     if not re.search(r'[A-Z]', new_password):
-        return False, "Password must contain at least one uppercase letter"
-    if not re.search(r'[a-z]', new_password):
-        return False, "Password must contain at least one lowercase letter"
+        return False, "Must contain uppercase letter"
     if not re.search(r'[0-9]', new_password):
-        return False, "Password must contain at least one number"
+        return False, "Must contain a number"
     
     new_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
     user['password_hash'] = new_hash
     user['must_change'] = False
-    user['failed_attempts'] = 0
-    user['locked_until'] = None
+    FAILED_ATTEMPTS[username] = 0
+    LOCKED_UNTIL[username] = None
     
-    return True, "Password reset successfully"
+    return True, "Password reset successfully! Please login."
 
 def login_screen():
-    """Display login form with forgot password option"""
+    """Display login form"""
     
     st.markdown("""
     <style>
-    .login-container {
-        max-width: 480px;
-        margin: 60px auto;
-        padding: 40px;
+    .login-box {
+        max-width: 450px;
+        margin: 50px auto;
+        padding: 35px;
         background: #fff;
         border-radius: 15px;
-        box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+        box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+        text-align: center;
     }
-    .login-header { text-align: center; margin-bottom: 25px; }
-    .login-header img { width: 100px; margin-bottom: 10px; }
-    .login-header h2 { color: #37474f; font-size: 1.6rem; margin: 0; }
-    .login-header p { color: #78909c; font-size: 0.85rem; margin-top: 5px; }
-    .stButton button { width: 100%; }
+    .login-box img { width: 100px; margin-bottom: 15px; }
+    .login-box h2 { color: #37474f; font-size: 1.5rem; margin-bottom: 5px; }
+    .login-box p { color: #78909c; font-size: 0.85rem; }
     </style>
     """, unsafe_allow_html=True)
     
-    # Handle forgot password or change password screens
-    if st.session_state.show_change_password:
-        show_change_password_screen()
-        return
-    if st.session_state.show_forgot_password:
-        show_forgot_password_screen()
-        return
+    # Determine which screen to show
+    screen = st.session_state.current_screen
     
     col1, col2, col3 = st.columns([1, 2, 1])
     
     with col2:
-        st.markdown(f"""
-        <div class="login-container">
-            <div class="login-header">
-                <img src="{LOGO_URL}" alt="Churchgate Logo">
-                <h2>Bank Reconciliation System</h2>
-                <p>🔐 Secure Access — Authorized Personnel Only</p>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Display any login messages
-        if st.session_state.login_message:
-            msg_type, msg_text = st.session_state.login_message
-            if msg_type == 'error':
-                st.error(msg_text)
-            elif msg_type == 'success':
-                st.success(msg_text)
-            elif msg_type == 'warning':
-                st.warning(msg_text)
-            st.session_state.login_message = None
-        
-        username = st.text_input("Username", placeholder="Enter your username", key="login_user")
-        password = st.text_input("Password", placeholder="Enter your password", type="password", key="login_pass")
-        
-        col_a, col_b = st.columns([1, 1])
-        with col_a:
-            if st.button("🔑 Login", type="primary", use_container_width=True):
+        if screen == 'login':
+            show_login_form()
+        elif screen == 'change_password':
+            show_change_password_form()
+        elif screen == 'forgot_password':
+            show_forgot_password_form()
+
+def show_login_form():
+    """Show the login form"""
+    st.markdown(f"""
+    <div class="login-box">
+        <img src="{LOGO_URL}" alt="Churchgate Logo">
+        <h2>Bank Reconciliation System</h2>
+        <p>🔐 Secure Access — Authorized Personnel Only</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Display messages
+    if st.session_state.login_message:
+        msg_type, msg_text = st.session_state.login_message
+        if msg_type == 'error': st.error(msg_text)
+        elif msg_type == 'success': st.success(msg_text)
+        elif msg_type == 'warning': st.warning(msg_text)
+        st.session_state.login_message = None
+    
+    username = st.text_input("Username", key="login_user_input")
+    password = st.text_input("Password", type="password", key="login_pass_input")
+    
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button("🔑 Login", type="primary", use_container_width=True):
+            if not username:
+                st.session_state.login_message = ('error', "Please enter your username.")
+            elif not password:
+                st.session_state.login_message = ('error', "Please enter your password.")
+            else:
                 verified, status = verify_password(username, password)
                 
                 if status == "locked":
-                    user = AUTHORIZED_USERS.get(username, {})
-                    if user.get('locked_until'):
-                        remaining = int((user['locked_until'] - datetime.now()).total_seconds() / 60)
-                        st.session_state.login_message = ('error', f"🔒 Account locked. Try again in {remaining} minute(s).")
-                    else:
-                        st.session_state.login_message = ('error', "🔒 Too many failed attempts. Account locked for 5 minutes.")
+                    st.session_state.login_message = ('error', "🔒 Account locked. Try again in 5 minutes.")
                 elif status == "wrong":
-                    user = AUTHORIZED_USERS.get(username, {})
-                    attempts = user.get('failed_attempts', 0)
+                    attempts = FAILED_ATTEMPTS.get(username, 0)
                     remaining = 3 - attempts
-                    st.session_state.login_message = ('error', f"❌ Invalid credentials. {remaining} attempt(s) remaining.")
+                    st.session_state.login_message = ('error', f"❌ Wrong password. {remaining} attempt(s) left.")
                 elif status == "invalid":
                     st.session_state.login_message = ('error', "❌ Username not found.")
                 elif status == "success":
                     st.session_state.authenticated = True
                     st.session_state.username = username
                     
-                    # Check if password change is required
-                    user = AUTHORIZED_USERS[username]
-                    if user['must_change']:
-                        st.session_state.show_change_password = True
+                    # Check if password change required
+                    if AUTHORIZED_USERS[username]['must_change']:
+                        st.session_state.current_screen = 'change_password'
                     else:
-                        st.session_state.login_message = ('success', f"✅ Welcome back, {username}!")
+                        st.session_state.login_message = ('success', f"✅ Welcome, {username}!")
                 
                 st.rerun()
-        
-        with col_b:
-            if st.button("🔑 Forgot Password?", type="secondary", use_container_width=True):
-                st.session_state.show_forgot_password = True
-                st.rerun()
-
-def show_change_password_screen():
-    """Force password change on first login"""
-    st.markdown("""
-    <style>
-    .login-container {
-        max-width: 480px;
-        margin: 60px auto;
-        padding: 40px;
-        background: #fff;
-        border-radius: 15px;
-        box-shadow: 0 8px 30px rgba(0,0,0,0.15);
-    }
-    .login-header { text-align: center; margin-bottom: 25px; }
-    .login-header img { width: 100px; margin-bottom: 10px; }
-    .login-header h2 { color: #37474f; font-size: 1.6rem; margin: 0; }
-    .login-header p { color: #78909c; font-size: 0.85rem; margin-top: 5px; }
-    </style>
-    """, unsafe_allow_html=True)
     
-    col1, col2, col3 = st.columns([1, 2, 1])
-    
-    with col2:
-        st.markdown(f"""
-        <div class="login-container">
-            <div class="login-header">
-                <img src="{LOGO_URL}" alt="Churchgate Logo">
-                <h2>🔒 Change Password</h2>
-                <p>First login requires a password change</p>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.warning("⚠️ You must change your password before continuing.")
-        
-        current_password = st.text_input("Current Password (default: Churchgate2026!)", type="password", key="change_current")
-        new_password = st.text_input("New Password", type="password", key="change_new", 
-                                     help="Min 8 chars, uppercase, lowercase, number, special char")
-        confirm_password = st.text_input("Confirm New Password", type="password", key="change_confirm")
-        
-        if st.button("🔒 Change Password", type="primary", use_container_width=True):
-            if new_password != confirm_password:
-                st.error("Passwords do not match!")
-            else:
-                success, message = change_password(st.session_state.username, current_password, new_password)
-                if success:
-                    st.session_state.show_change_password = False
-                    st.session_state.login_message = ('success', f"✅ {message} Please login with your new password.")
-                    st.session_state.authenticated = False
-                    st.session_state.username = None
-                else:
-                    st.error(message)
-            
+    with col_b:
+        if st.button("🔑 Forgot Password?", use_container_width=True):
+            st.session_state.current_screen = 'forgot_password'
             st.rerun()
 
-def show_forgot_password_screen():
-    """Forgot password reset screen"""
+def show_change_password_form():
+    """Show force password change form"""
     st.markdown("""
-    <style>
-    .login-container {
-        max-width: 480px;
-        margin: 60px auto;
-        padding: 40px;
-        background: #fff;
-        border-radius: 15px;
-        box-shadow: 0 8px 30px rgba(0,0,0,0.15);
-    }
-    .login-header { text-align: center; margin-bottom: 25px; }
-    .login-header img { width: 100px; margin-bottom: 10px; }
-    .login-header h2 { color: #37474f; font-size: 1.6rem; margin: 0; }
-    .login-header p { color: #78909c; font-size: 0.85rem; margin-top: 5px; }
-    </style>
+    <div class="login-box">
+        <h2>🔒 Change Password Required</h2>
+        <p>You must change your password before continuing.</p>
+    </div>
     """, unsafe_allow_html=True)
     
-    col1, col2, col3 = st.columns([1, 2, 1])
+    st.warning("⚠️ First login requires a password change.")
     
-    with col2:
-        st.markdown(f"""
-        <div class="login-container">
-            <div class="login-header">
-                <img src="{LOGO_URL}" alt="Churchgate Logo">
-                <h2>🔑 Reset Password</h2>
-                <p>Enter your username and a new password</p>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+    current_password = st.text_input("Current Password", type="password", key="cp_current",
+                                     help=f"Default: {DEFAULT_PASSWORD}")
+    new_password = st.text_input("New Password", type="password", key="cp_new",
+                                 help="Min 8 chars, uppercase, lowercase, number")
+    confirm_password = st.text_input("Confirm New Password", type="password", key="cp_confirm")
+    
+    if st.button("🔒 Set New Password", type="primary", use_container_width=True):
+        if new_password != confirm_password:
+            st.error("Passwords do not match!")
+        else:
+            success, message = change_password(st.session_state.username, current_password, new_password)
+            if success:
+                st.session_state.current_screen = 'login'
+                st.session_state.authenticated = False
+                st.session_state.username = None
+                st.session_state.login_message = ('success', message)
+            else:
+                st.error(message)
         
-        username = st.text_input("Username", placeholder="Enter your username", key="reset_user")
-        new_password = st.text_input("New Password", type="password", key="reset_new",
-                                     help="Min 8 chars, uppercase, lowercase, number")
-        confirm_password = st.text_input("Confirm New Password", type="password", key="reset_confirm")
-        
-        col_a, col_b = st.columns([1, 1])
-        with col_a:
-            if st.button("🔒 Reset Password", type="primary", use_container_width=True):
-                if new_password != confirm_password:
-                    st.error("Passwords do not match!")
-                elif not username:
-                    st.error("Please enter your username.")
+        st.rerun()
+
+def show_forgot_password_form():
+    """Show forgot password form"""
+    st.markdown("""
+    <div class="login-box">
+        <h2>🔑 Reset Password</h2>
+        <p>Enter your username and a new password</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    username = st.text_input("Username", key="fp_user")
+    new_password = st.text_input("New Password", type="password", key="fp_new",
+                                 help="Min 8 chars, uppercase, number")
+    confirm_password = st.text_input("Confirm New Password", type="password", key="fp_confirm")
+    
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button("🔒 Reset Password", type="primary", use_container_width=True):
+            if new_password != confirm_password:
+                st.error("Passwords do not match!")
+            elif not username:
+                st.error("Please enter your username.")
+            else:
+                success, message = reset_password(username, new_password)
+                if success:
+                    st.session_state.current_screen = 'login'
+                    st.session_state.login_message = ('success', message)
                 else:
-                    success, message = reset_password(username, new_password)
-                    if success:
-                        st.session_state.show_forgot_password = False
-                        st.session_state.login_message = ('success', f"✅ {message} Please login.")
-                    else:
-                        st.error(message)
-                
-                st.rerun()
-        
-        with col_b:
-            if st.button("↩ Back to Login", type="secondary", use_container_width=True):
-                st.session_state.show_forgot_password = False
-                st.rerun()
+                    st.error(message)
+            st.rerun()
+    
+    with col_b:
+        if st.button("↩ Back to Login", use_container_width=True):
+            st.session_state.current_screen = 'login'
+            st.rerun()
 
 # ============================================================
 # MAIN APP (Only runs if authenticated)
