@@ -211,7 +211,12 @@ def show_forgot_password():
 # MAIN APP
 # ============================================================
 
-st.set_page_config(page_title="Churchgate Bank Reconciliation", page_icon="🏦", layout="wide")
+st.set_page_config(
+    page_title="Churchgate Bank Reconciliation",
+    page_icon="churchgate-logo.png",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 if not st.session_state.authenticated:
     show_auth()
