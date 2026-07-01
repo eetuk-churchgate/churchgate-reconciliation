@@ -515,7 +515,7 @@ def generate_erp_csv(result_df, voucher_df):
 
 
 def generate_erp_excel(result_df, voucher_df):
-    """Generate In4Velocity-ready ERP Excel (.xlsx) with proper formatting"""
+    """Generate In4Velocity-ready ERP Excel (.xlsx)"""
     valid_statuses = ['MATCHED','AUTO_MATCHED','FLAGGED_COMBINED','FUZZY_MATCHED','FUZZY_WIDE']
     
     erp_data = result_df[
