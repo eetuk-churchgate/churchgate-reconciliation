@@ -515,7 +515,7 @@ def generate_erp_csv(result_df, voucher_df):
 
 
 def generate_erp_excel(result_df, voucher_df):
-    """Generate In4Velocity-ready ERP Excel (.xlsx)"""
+    """Generate In4Velocity-ready ERP Excel (.xlsx) with clean formatting"""
     valid_statuses = ['MATCHED','AUTO_MATCHED','FLAGGED_COMBINED','FUZZY_MATCHED','FUZZY_WIDE']
     
     erp_data = result_df[
@@ -528,14 +528,50 @@ def generate_erp_excel(result_df, voucher_df):
     
     erp_data = erp_data.reset_index(drop=True)
     
+    def extract_cert_no_clean(details):
+        """Extract certificate number - returns number or empty string"""
+        text = str(details).upper()
+        
+        # Pattern 1: E-CERT NO. XXXX, CERT NO XXXX, MNO.XXXX
+        patterns = [
+            r'E[- ]CERT[- ]NO[\.]?\s*(\d+)',
+            r'CERT[- ]NO[\.]?\s*(\d+)',
+            r'MNO[\.]?\s*(\d+)',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if match:
+                return float(f"{int(match.group(1)):.2f}")
+        
+        # Pattern 2: CHURCHGATE/XXXX/, CHURCH/XXXX/, RBPL/XXXX/, FCPL/XXXX/
+        cert_patterns = [
+            r'CHURCHGATE[\\/](\d+)[\\/]',
+            r'CHURCH[\\/](\d+)[\\/]',
+            r'RBPL[\\/](\d+)[\\/]',
+            r'FCPL[\\/](\d+)[\\/]',
+        ]
+        for pattern in cert_patterns:
+            match = re.search(pattern, text)
+            if match:
+                return float(f"{int(match.group(1)):.2f}")
+        
+        # Pattern 3: Generic /XXXX/ where XXXX is 4-7 digits
+        slash_match = re.search(r'[\\/](\d{4,7})[\\/]', text)
+        if slash_match:
+            num = int(slash_match.group(1))
+            if 100 <= num <= 9999999:
+                return float(f"{num:.2f}")
+        
+        return ''  # Empty string instead of 0
+    
     erp_export = pd.DataFrame()
     erp_export['SN'] = range(1, len(erp_data) + 1)
     erp_export['Transaction Date'] = erp_data['Bank_Date'].dt.strftime('%d/%m/%Y')
     erp_export['Transaction Details'] = erp_data['Bank_Ref'].apply(clean_ref_no)
-    erp_export['Ref No'] = erp_data['Bank_Details'].apply(extract_cert_no)
+    erp_export['Ref No'] = erp_data['Bank_Details'].apply(extract_cert_no_clean)
     erp_export['Amount Type'] = erp_data['Amount'].apply(lambda x: 'DEBIT' if x < 0 else 'CREDIT')
-    erp_export['Withdrawals'] = erp_data['Amount'].apply(lambda x: f'{abs(x):,.2f}' if x < 0 else '0.00')
-    erp_export['Lodgment'] = erp_data['Amount'].apply(lambda x: f'{abs(x):,.2f}' if x > 0 else '0.00')
+    erp_export['Withdrawals'] = erp_data['Amount'].apply(lambda x: round(abs(x), 2) if x < 0 else 0.00)
+    erp_export['Lodgment'] = erp_data['Amount'].apply(lambda x: round(abs(x), 2) if x > 0 else 0.00)
     
     return erp_export
 
