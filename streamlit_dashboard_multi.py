@@ -513,6 +513,33 @@ def generate_erp_csv(result_df, voucher_df):
     erp_export['Lodgment'] = erp_data['Amount'].apply(lambda x: f'{abs(x):,.2f}' if x > 0 else '0.00')
     return erp_export.to_csv(index=False, quoting=1)
 
+
+def generate_erp_excel(result_df, voucher_df):
+    """Generate In4Velocity-ready ERP Excel (.xlsx) with proper formatting"""
+    valid_statuses = ['MATCHED','AUTO_MATCHED','FLAGGED_COMBINED','FUZZY_MATCHED','FUZZY_WIDE']
+    
+    erp_data = result_df[
+        (result_df['Match_Status'].isin(valid_statuses)) & 
+        (result_df['Bank_Date'].notna()) &
+        (result_df['Bank_Details'].notna()) &
+        (result_df['Bank_Details'] != '') &
+        (result_df['Amount'].notna())
+    ].copy()
+    
+    erp_data = erp_data.reset_index(drop=True)
+    
+    erp_export = pd.DataFrame()
+    erp_export['SN'] = range(1, len(erp_data) + 1)
+    erp_export['Transaction Date'] = erp_data['Bank_Date'].dt.strftime('%d/%m/%Y')
+    erp_export['Transaction Details'] = erp_data['Bank_Ref'].apply(clean_ref_no)
+    erp_export['Ref No'] = erp_data['Bank_Details'].apply(extract_cert_no)
+    erp_export['Amount Type'] = erp_data['Amount'].apply(lambda x: 'DEBIT' if x < 0 else 'CREDIT')
+    erp_export['Withdrawals'] = erp_data['Amount'].apply(lambda x: f'{abs(x):,.2f}' if x < 0 else '0.00')
+    erp_export['Lodgment'] = erp_data['Amount'].apply(lambda x: f'{abs(x):,.2f}' if x > 0 else '0.00')
+    
+    return erp_export
+
+
 # SIDEBAR
 with st.sidebar:
     try: st.image(LOGO_URL, width=180)
@@ -634,16 +661,34 @@ else:
             with t4:
                 st.subheader("📥 Export Reports")
                 st.info(f"✅ **{s['matched']} reconciled transactions** ready for ERP export.")
+                
                 cb1, cb2 = st.columns(2)
                 with cb1:
-                    if st.button("📊 Download Full Report (Excel)", type="primary", use_container_width=True):
+                    if st.button("📊 Full Report (Excel)", type="primary", use_container_width=True):
                         with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
                             with pd.ExcelWriter(tmp.name, engine='xlsxwriter') as w: result_df.to_excel(w, sheet_name='Reconciliation', index=False)
-                            with open(tmp.name, 'rb') as f: st.download_button("📥 Download Report", f, file_name=f"Recon_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
+                            with open(tmp.name, 'rb') as f: st.download_button("📥 Download", f, file_name=f"Recon_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
                 with cb2:
-                    if st.button("📁 Download ERP CSV", type="primary", use_container_width=True):
+                    if st.button("📁 ERP CSV", type="primary", use_container_width=True):
                         erp_csv = generate_erp_csv(result_df, voucher_df)
-                        st.download_button("📥 Download ERP CSV", erp_csv, file_name=f"In4V_Import_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", mime="text/csv")
+                        st.download_button("📥 Download CSV", erp_csv, file_name=f"In4V_Import_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", mime="text/csv")
+                
+                st.markdown("---")
+                
+                if st.button("📥 Download ERP Excel (.xlsx) — In4Velocity Format", type="primary", use_container_width=True):
+                    erp_excel = generate_erp_excel(result_df, voucher_df)
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+                        with pd.ExcelWriter(tmp.name, engine='xlsxwriter') as w:
+                            erp_excel.to_excel(w, sheet_name='BRS Import', index=False)
+                            worksheet = w.sheets['BRS Import']
+                            for i, col in enumerate(erp_excel.columns):
+                                max_len = max(erp_excel[col].astype(str).str.len().max(), len(col)) + 2
+                                worksheet.set_column(i, i, max_len)
+                        with open(tmp.name, 'rb') as f:
+                            st.download_button("📥 Download ERP Excel", f, file_name=f"In4V_Import_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
+                
+                st.info("💡 **For ERP import, use the Excel (.xlsx) file.** Dates formatted as DD/MM/YYYY.")
+                
                 st.markdown("---")
                 st.subheader("🚀 Push to In4Velocity ERP")
                 API_CONFIG = {'base_url': 'https://in4velocity-api.churchgate.com', 'endpoint': '/api/v1/brs/transactions', 'api_key': 'YOUR_API_KEY_HERE'}
