@@ -456,10 +456,40 @@ def reconcile(bank_df, voucher_df):
     return result_df, {'total': total, 'matched': matched, 'direct': direct, 'auto': auto, 'flagged': flagged, 'fuzzy': fuzzy, 'wide': wide, 'unmatched_bank': unmatched_bank, 'unmatched_voucher': unmatched_voucher, 'rate': rate, 'used_voucher_nos': used_voucher_nos}
 
 def extract_cert_no(details):
+    """Extract certificate number - catches ALL patterns"""
     text = str(details).upper()
-    for pattern in [r'E[- ]CERT[- ]NO[\.]?\s*(\d+)', r'CERT[- ]NO[\.]?\s*(\d+)', r'NO[\.]?\s*(\d{3,})', r'MNO[\.]?\s*(\d+)']:
+    
+    # Pattern 1: E-CERT NO. XXXX, CERT NO XXXX, MNO.XXXX
+    patterns = [
+        r'E[- ]CERT[- ]NO[\.]?\s*(\d+)',
+        r'CERT[- ]NO[\.]?\s*(\d+)',
+        r'MNO[\.]?\s*(\d+)',
+    ]
+    for pattern in patterns:
         match = re.search(pattern, text)
-        if match: return f'="{int(match.group(1)):.2f}"'
+        if match:
+            return f'="{int(match.group(1)):.2f}"'
+    
+    # Pattern 2: CHURCHGATE/XXXX/, CHURCH/XXXX/, RBPL/XXXX/, FCPL/XXXX/
+    cert_patterns = [
+        r'CHURCHGATE[\\/](\d+)[\\/]',
+        r'CHURCH[\\/](\d+)[\\/]',
+        r'RBPL[\\/](\d+)[\\/]',
+        r'FCPL[\\/](\d+)[\\/]',
+    ]
+    for pattern in cert_patterns:
+        match = re.search(pattern, text)
+        if match:
+            return f'="{int(match.group(1)):.2f}"'
+    
+    # Pattern 3: Generic /E/XXXXX/ or any 4-7 digit number between slashes
+    # This catches: PP_FCPL/E/253690/ACB → 253690
+    slash_match = re.search(r'[\\/](\d{4,7})[\\/]', text)
+    if slash_match:
+        num = int(slash_match.group(1))
+        if 100 <= num <= 9999999:
+            return f'="{num:.2f}"'
+    
     return ''
 
 def clean_ref_no(ref_val):
