@@ -456,10 +456,10 @@ def reconcile(bank_df, voucher_df):
     return result_df, {'total': total, 'matched': matched, 'direct': direct, 'auto': auto, 'flagged': flagged, 'fuzzy': fuzzy, 'wide': wide, 'unmatched_bank': unmatched_bank, 'unmatched_voucher': unmatched_voucher, 'rate': rate, 'used_voucher_nos': used_voucher_nos}
 
 def extract_cert_no(details):
-    """Extract certificate number - catches ALL patterns"""
+    """Extract certificate number - prioritizes 6-digit numbers from transaction details"""
     text = str(details).upper()
     
-    # Pattern 1: E-CERT NO. XXXX, CERT NO XXXX, MNO.XXXX
+    # PRIORITY 1: E-CERT NO. XXXX, CERT NO XXXX, MNO.XXXX
     patterns = [
         r'E[- ]CERT[- ]NO[\.]?\s*(\d+)',
         r'CERT[- ]NO[\.]?\s*(\d+)',
@@ -468,9 +468,10 @@ def extract_cert_no(details):
     for pattern in patterns:
         match = re.search(pattern, text)
         if match:
-            return f'="{int(match.group(1)):.2f}"'
+            num = int(match.group(1))
+            return f'="{num:.2f}"'
     
-    # Pattern 2: CHURCHGATE/XXXX/, CHURCH/XXXX/, RBPL/XXXX/, FCPL/XXXX/
+    # PRIORITY 2: CHURCHGATE/XXXXXX/, CHURCH/XXXXXX/, RBPL/XXXXXX/, FCPL/XXXXXX/
     cert_patterns = [
         r'CHURCHGATE[\\/](\d+)[\\/]',
         r'CHURCH[\\/](\d+)[\\/]',
@@ -480,10 +481,19 @@ def extract_cert_no(details):
     for pattern in cert_patterns:
         match = re.search(pattern, text)
         if match:
-            return f'="{int(match.group(1)):.2f}"'
+            num = int(match.group(1))
+            return f'="{num:.2f}"'
     
-    # Pattern 3: Generic /E/XXXXX/ or any 4-7 digit number between slashes
-    # This catches: PP_FCPL/E/253690/ACB → 253690
+    # PRIORITY 3: Any 6-digit number (with or without slashes)
+    # Matches: PP_SUSP_205750_1093055472_ → 205750 (first 6-digit)
+    # Matches: /253690/ → 253690
+    six_digit = re.findall(r'(?<!\d)(\d{6})(?!\d)', text)
+    if six_digit:
+        # Take the FIRST 6-digit number found
+        num = int(six_digit[0])
+        return f'="{num:.2f}"'
+    
+    # PRIORITY 4: Generic slash-enclosed 4-7 digit number
     slash_match = re.search(r'[\\/](\d{4,7})[\\/]', text)
     if slash_match:
         num = int(slash_match.group(1))
@@ -529,40 +539,32 @@ def generate_erp_excel(result_df, voucher_df):
     erp_data = erp_data.reset_index(drop=True)
     
     def extract_cert_no_clean(details):
-        """Extract certificate number - returns number or empty string"""
+        """Extract certificate number - returns clean number for Excel"""
         text = str(details).upper()
         
-        # Pattern 1: E-CERT NO. XXXX, CERT NO XXXX, MNO.XXXX
-        patterns = [
-            r'E[- ]CERT[- ]NO[\.]?\s*(\d+)',
-            r'CERT[- ]NO[\.]?\s*(\d+)',
-            r'MNO[\.]?\s*(\d+)',
-        ]
+        # E-CERT patterns
+        patterns = [r'E[- ]CERT[- ]NO[\.]?\s*(\d+)', r'CERT[- ]NO[\.]?\s*(\d+)', r'MNO[\.]?\s*(\d+)']
         for pattern in patterns:
             match = re.search(pattern, text)
-            if match:
-                return float(f"{int(match.group(1)):.2f}")
+            if match: return float(f"{int(match.group(1)):.2f}")
         
-        # Pattern 2: CHURCHGATE/XXXX/, CHURCH/XXXX/, RBPL/XXXX/, FCPL/XXXX/
-        cert_patterns = [
-            r'CHURCHGATE[\\/](\d+)[\\/]',
-            r'CHURCH[\\/](\d+)[\\/]',
-            r'RBPL[\\/](\d+)[\\/]',
-            r'FCPL[\\/](\d+)[\\/]',
-        ]
+        # CHURCHGATE/XXXX/ patterns
+        cert_patterns = [r'CHURCHGATE[\\/](\d+)[\\/]', r'CHURCH[\\/](\d+)[\\/]', r'RBPL[\\/](\d+)[\\/]', r'FCPL[\\/](\d+)[\\/]']
         for pattern in cert_patterns:
             match = re.search(pattern, text)
-            if match:
-                return float(f"{int(match.group(1)):.2f}")
+            if match: return float(f"{int(match.group(1)):.2f}")
         
-        # Pattern 3: Generic /XXXX/ where XXXX is 4-7 digits
+        # Any 6-digit number
+        six_digit = re.findall(r'(?<!\d)(\d{6})(?!\d)', text)
+        if six_digit: return float(f"{int(six_digit[0]):.2f}")
+        
+        # Generic slash-enclosed
         slash_match = re.search(r'[\\/](\d{4,7})[\\/]', text)
         if slash_match:
             num = int(slash_match.group(1))
-            if 100 <= num <= 9999999:
-                return float(f"{num:.2f}")
+            if 100 <= num <= 9999999: return float(f"{num:.2f}")
         
-        return ''  # Empty string instead of 0
+        return 0.0
     
     erp_export = pd.DataFrame()
     erp_export['SN'] = range(1, len(erp_data) + 1)
