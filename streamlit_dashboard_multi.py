@@ -768,10 +768,11 @@ else:
                             worksheet = w.sheets['BRS Import']
                             
                             # Add number format for Ref No column (column index 3 = column D)
-                            ref_no_format = w.book.add_format({'num_format': '#,##0.00'})
+                            # NO COMMAS - plain number with 2 decimal places
+                            ref_no_format = w.book.add_format({'num_format': '0.00'})
                             worksheet.set_column(3, 3, 18, ref_no_format)  # Ref No column
                             
-                            # Format amount columns
+                            # Format amount columns (keep commas for currency amounts)
                             amount_format = w.book.add_format({'num_format': '#,##0.00'})
                             worksheet.set_column(5, 5, 18, amount_format)  # Withdrawals
                             worksheet.set_column(6, 6, 18, amount_format)  # Lodgment
