@@ -456,48 +456,62 @@ def reconcile(bank_df, voucher_df):
     return result_df, {'total': total, 'matched': matched, 'direct': direct, 'auto': auto, 'flagged': flagged, 'fuzzy': fuzzy, 'wide': wide, 'unmatched_bank': unmatched_bank, 'unmatched_voucher': unmatched_voucher, 'rate': rate, 'used_voucher_nos': used_voucher_nos}
 
 def extract_cert_no(details):
-    """Extract certificate number - prioritizes 6-digit numbers from transaction details"""
-    text = str(details).upper()
+    """Extract certificate number - handles ALL transaction number patterns for CSV export"""
+    text = str(details).upper().strip()
     
-    # PRIORITY 1: E-CERT NO. XXXX, CERT NO XXXX, MNO.XXXX
+    # PRIORITY 1: Explicit certificate labels
     patterns = [
-        r'E[- ]CERT[- ]NO[\.]?\s*(\d+)',
-        r'CERT[- ]NO[\.]?\s*(\d+)',
-        r'MNO[\.]?\s*(\d+)',
+        r'E[- ]CERT[- ]NO[\.]?\s*[:\-]?\s*(\d+)',     # E-CERT NO. 2498
+        r'CERT[- ]NO[\.]?\s*[:\-]?\s*(\d+)',            # CERT NO 3166
+        r'MNO[\.]?\s*[:\-]?\s*(\d+)',                    # MNO. 3165
+        r'CERT[\.]?\s*[:\-]?\s*(\d+)',                   # CERT 3166
     ]
     for pattern in patterns:
         match = re.search(pattern, text)
         if match:
             num = int(match.group(1))
-            return f'="{num:.2f}"'
+            if 100 <= num <= 9999999:
+                return f'="{num:.2f}"'
     
-    # PRIORITY 2: CHURCHGATE/XXXXXX/, CHURCH/XXXXXX/, RBPL/XXXXXX/, FCPL/XXXXXX/
+    # PRIORITY 2: Slash-enclosed organization references
     cert_patterns = [
-        r'CHURCHGATE[\\/](\d+)[\\/]',
-        r'CHURCH[\\/](\d+)[\\/]',
-        r'RBPL[\\/](\d+)[\\/]',
-        r'FCPL[\\/](\d+)[\\/]',
+        r'CHURCHGATE[\\/](\d+)[\\/]',     # CHURCHGATE/255625/
+        r'CHURCH[\\/](\d+)[\\/]',          # CHURCH/255625/
+        r'RBPL[\\/](\d+)[\\/]',            # RBPL/XXXXX/
+        r'FCPL[\\/](?:E[\\/])?(\d+)[\\/]', # FCPL/E/253690/ or FCPL/253690/
     ]
     for pattern in cert_patterns:
         match = re.search(pattern, text)
         if match:
             num = int(match.group(1))
+            if 100 <= num <= 9999999:
+                return f'="{num:.2f}"'
+    
+    # PRIORITY 3: PP_XXXXX_ pattern (e.g., PP_SUSP_205750_..., PP_FCPL_...)
+    pp_match = re.search(r'PP_[\w]+[\\/_](\d{4,7})(?:[\\/_]|$)', text)
+    if pp_match:
+        num = int(pp_match.group(1))
+        if 100 <= num <= 9999999:
             return f'="{num:.2f}"'
     
-    # PRIORITY 3: Any 6-digit number (with or without slashes)
-    # Matches: PP_SUSP_205750_1093055472_ → 205750 (first 6-digit)
-    # Matches: /253690/ → 253690
+    # PRIORITY 4: Any slash-enclosed 4-7 digit number (generic)
+    slash_matches = re.findall(r'[\\/](\d{4,7})[\\/]', text)
+    for match in slash_matches:
+        num = int(match)
+        if 100 <= num <= 9999999:
+            return f'="{num:.2f}"'
+    
+    # PRIORITY 5: First 6-digit number in the string (for PP_SUSP_205750_1093055472_)
     six_digit = re.findall(r'(?<!\d)(\d{6})(?!\d)', text)
     if six_digit:
-        # Take the FIRST 6-digit number found
         num = int(six_digit[0])
         return f'="{num:.2f}"'
     
-    # PRIORITY 4: Generic slash-enclosed 4-7 digit number
-    slash_match = re.search(r'[\\/](\d{4,7})[\\/]', text)
-    if slash_match:
-        num = int(slash_match.group(1))
-        if 100 <= num <= 9999999:
+    # PRIORITY 6: Any 4-5 digit number that looks like a cert number
+    four_five_digit = re.findall(r'(?<!\d)(\d{4,5})(?!\d)', text)
+    if four_five_digit:
+        num = int(four_five_digit[0])
+        if 1000 <= num <= 99999:
             return f'="{num:.2f}"'
     
     return ''
@@ -539,32 +553,65 @@ def generate_erp_excel(result_df, voucher_df):
     erp_data = erp_data.reset_index(drop=True)
     
     def extract_cert_no_clean(details):
-        """Extract certificate number - returns clean number for Excel"""
-        text = str(details).upper()
+        """Extract certificate number - returns clean float for Excel with 2 decimal places"""
+        text = str(details).upper().strip()
         
-        # E-CERT patterns
-        patterns = [r'E[- ]CERT[- ]NO[\.]?\s*(\d+)', r'CERT[- ]NO[\.]?\s*(\d+)', r'MNO[\.]?\s*(\d+)']
+        # PRIORITY 1: Explicit certificate labels
+        patterns = [
+            r'E[- ]CERT[- ]NO[\.]?\s*[:\-]?\s*(\d+)',     # E-CERT NO. 2498
+            r'CERT[- ]NO[\.]?\s*[:\-]?\s*(\d+)',            # CERT NO 3166
+            r'MNO[\.]?\s*[:\-]?\s*(\d+)',                    # MNO. 3165
+            r'CERT[\.]?\s*[:\-]?\s*(\d+)',                   # CERT 3166
+        ]
         for pattern in patterns:
             match = re.search(pattern, text)
-            if match: return float(f"{int(match.group(1)):.2f}")
+            if match:
+                num = int(match.group(1))
+                if 100 <= num <= 9999999:
+                    return round(float(f"{num}.00"), 2)
         
-        # CHURCHGATE/XXXX/ patterns
-        cert_patterns = [r'CHURCHGATE[\\/](\d+)[\\/]', r'CHURCH[\\/](\d+)[\\/]', r'RBPL[\\/](\d+)[\\/]', r'FCPL[\\/](\d+)[\\/]']
+        # PRIORITY 2: Slash-enclosed organization references
+        cert_patterns = [
+            r'CHURCHGATE[\\/](\d+)[\\/]',     # CHURCHGATE/255625/
+            r'CHURCH[\\/](\d+)[\\/]',          # CHURCH/255625/
+            r'RBPL[\\/](\d+)[\\/]',            # RBPL/XXXXX/
+            r'FCPL[\\/](?:E[\\/])?(\d+)[\\/]', # FCPL/E/253690/ or FCPL/253690/
+        ]
         for pattern in cert_patterns:
             match = re.search(pattern, text)
-            if match: return float(f"{int(match.group(1)):.2f}")
+            if match:
+                num = int(match.group(1))
+                if 100 <= num <= 9999999:
+                    return round(float(f"{num}.00"), 2)
         
-        # Any 6-digit number
+        # PRIORITY 3: PP_XXXXX_ pattern (e.g., PP_SUSP_205750_..., PP_FCPL_...)
+        pp_match = re.search(r'PP_[\w]+[\\/_](\d{4,7})(?:[\\/_]|$)', text)
+        if pp_match:
+            num = int(pp_match.group(1))
+            if 100 <= num <= 9999999:
+                return round(float(f"{num}.00"), 2)
+        
+        # PRIORITY 4: Any slash-enclosed 4-7 digit number (generic)
+        slash_matches = re.findall(r'[\\/](\d{4,7})[\\/]', text)
+        for match in slash_matches:
+            num = int(match)
+            if 100 <= num <= 9999999:
+                return round(float(f"{num}.00"), 2)
+        
+        # PRIORITY 5: First 6-digit number in the string (for PP_SUSP_205750_1093055472_)
         six_digit = re.findall(r'(?<!\d)(\d{6})(?!\d)', text)
-        if six_digit: return float(f"{int(six_digit[0]):.2f}")
+        if six_digit:
+            num = int(six_digit[0])
+            return round(float(f"{num}.00"), 2)
         
-        # Generic slash-enclosed
-        slash_match = re.search(r'[\\/](\d{4,7})[\\/]', text)
-        if slash_match:
-            num = int(slash_match.group(1))
-            if 100 <= num <= 9999999: return float(f"{num:.2f}")
+        # PRIORITY 6: Any 4-5 digit number that looks like a cert number
+        four_five_digit = re.findall(r'(?<!\d)(\d{4,5})(?!\d)', text)
+        if four_five_digit:
+            num = int(four_five_digit[0])
+            if 1000 <= num <= 99999:
+                return round(float(f"{num}.00"), 2)
         
-        return 0.0
+        return 0.00
     
     erp_export = pd.DataFrame()
     erp_export['SN'] = range(1, len(erp_data) + 1)
@@ -719,9 +766,22 @@ else:
                         with pd.ExcelWriter(tmp.name, engine='xlsxwriter') as w:
                             erp_excel.to_excel(w, sheet_name='BRS Import', index=False)
                             worksheet = w.sheets['BRS Import']
+                            
+                            # Add number format for Ref No column (column index 3 = column D)
+                            ref_no_format = w.book.add_format({'num_format': '#,##0.00'})
+                            worksheet.set_column(3, 3, 18, ref_no_format)  # Ref No column
+                            
+                            # Format amount columns
+                            amount_format = w.book.add_format({'num_format': '#,##0.00'})
+                            worksheet.set_column(5, 5, 18, amount_format)  # Withdrawals
+                            worksheet.set_column(6, 6, 18, amount_format)  # Lodgment
+                            
+                            # Auto-width other columns
                             for i, col in enumerate(erp_excel.columns):
-                                max_len = max(erp_excel[col].astype(str).str.len().max(), len(col)) + 2
-                                worksheet.set_column(i, i, max_len)
+                                if i not in [3, 5, 6]:  # Skip already formatted columns
+                                    max_len = max(erp_excel[col].astype(str).str.len().max(), len(col)) + 2
+                                    worksheet.set_column(i, i, min(max_len, 40))
+                        
                         with open(tmp.name, 'rb') as f:
                             st.download_button("📥 Download ERP Excel", f, file_name=f"In4V_Import_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
                 
