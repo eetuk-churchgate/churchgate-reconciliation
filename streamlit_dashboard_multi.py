@@ -14,7 +14,6 @@ import tempfile
 import io
 import json
 import bcrypt
-import requests
 from datetime import datetime, timedelta
 from difflib import SequenceMatcher
 import plotly.graph_objects as go
@@ -26,9 +25,7 @@ LOGO_URL = "https://raw.githubusercontent.com/eetuk-churchgate/churchgate-reconc
 # 🔐 AUTHENTICATION SYSTEM — PERSISTENT JSON STORAGE
 # ============================================================
 
-DEFAULT_PASSWORD = 'Churchgate2026!'
 CREDENTIALS_FILE = 'user_credentials.json'
-GITHUB_CREDENTIALS_URL = 'https://raw.githubusercontent.com/eetuk-churchgate/churchgate-reconciliation/main/user_credentials.json'
 
 def make_hash(password):
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
@@ -40,12 +37,12 @@ def load_credentials():
                 return json.load(f)
     except:
         pass
-    try:
-        response = requests.get(GITHUB_CREDENTIALS_URL, timeout=5)
-        if response.status_code == 200:
-            return response.json()
-    except:
-        pass
+    seed = os.environ.get('AUTH_CREDENTIALS_JSON')
+    if seed:
+        try:
+            return json.loads(seed)
+        except:
+            pass
     return {}
 
 def save_credentials(credentials):
@@ -59,14 +56,9 @@ def save_credentials(credentials):
 USER_DB = load_credentials()
 
 if not USER_DB:
-    USER_DB = {
-        'etuk': {'hash': make_hash(DEFAULT_PASSWORD), 'must_change': True, 'role': 'Administrator'},
-        'jerome': {'hash': make_hash(DEFAULT_PASSWORD), 'must_change': True, 'role': 'Group Executive Director'},
-        'finance': {'hash': make_hash(DEFAULT_PASSWORD), 'must_change': True, 'role': 'Finance Team'},
-        'accountant': {'hash': make_hash(DEFAULT_PASSWORD), 'must_change': True, 'role': 'Account Officer'},
-        'paul': {'hash': make_hash(DEFAULT_PASSWORD), 'must_change': True, 'role': 'ERP Manager'},
-    }
-    save_credentials(USER_DB)
+    st.set_page_config(page_title="Churchgate Bank Reconciliation", page_icon="🏦", layout="wide")
+    st.error("⚠️ No credentials configured. Set the AUTH_CREDENTIALS_JSON environment variable before this app can start.")
+    st.stop()
 
 if 'auth_init' not in st.session_state:
     st.session_state.auth_init = True
@@ -157,7 +149,7 @@ def show_change_password():
     st.markdown("""<div class="auth-container"><h2>🔒 Change Password Required</h2><p>First login — you must change your password.</p></div>""", unsafe_allow_html=True)
     st.warning(f"Changing password for: **{username}**")
     with st.form("change_form", clear_on_submit=True):
-        current = st.text_input("Current Password", type="password", help=f"Default: {DEFAULT_PASSWORD}")
+        current = st.text_input("Current Password", type="password")
         new_pass = st.text_input("New Password (min 8 chars)", type="password")
         confirm = st.text_input("Confirm New Password", type="password")
         submitted = st.form_submit_button("🔒 Set New Password", type="primary", use_container_width=True)
@@ -180,30 +172,8 @@ def show_change_password():
         st.rerun()
 
 def show_forgot_password():
-    st.markdown("""<div class="auth-container"><h2>🔑 Reset Password</h2><p>Enter your username and a new password.</p></div>""", unsafe_allow_html=True)
-    with st.form("forgot_form", clear_on_submit=True):
-        username = st.text_input("Username")
-        new_pass = st.text_input("New Password (min 8 chars)", type="password")
-        confirm = st.text_input("Confirm New Password", type="password")
-        col_a, col_b = st.columns(2)
-        with col_a: submitted = st.form_submit_button("🔒 Reset Password", type="primary", use_container_width=True)
-        with col_b: back = st.form_submit_button("↩ Back to Login", use_container_width=True)
-    if submitted:
-        if new_pass != confirm: st.error("Passwords do not match!"); st.stop()
-        if len(new_pass) < 8: st.error("Password must be at least 8 characters."); st.stop()
-        current_db = load_credentials()
-        if current_db: USER_DB.update(current_db)
-        user = USER_DB.get(username)
-        if not user: st.error("Username not found."); st.stop()
-        user['hash'] = make_hash(new_pass)
-        user['must_change'] = False
-        st.session_state.failed_attempts[username] = 0
-        st.session_state.locked_until[username] = None
-        save_credentials(USER_DB)
-        st.session_state.auth_screen = 'login'
-        st.session_state.auth_message = ('success', "✅ Password reset! Please login.")
-        st.rerun()
-    if back:
+    st.markdown("""<div class="auth-container"><h2>🔑 Forgot Password</h2><p>Self-service reset is disabled for security. Contact your system administrator to have your password reset.</p></div>""", unsafe_allow_html=True)
+    if st.button("↩ Back to Login", use_container_width=True):
         st.session_state.auth_screen = 'login'
         st.rerun()
 
