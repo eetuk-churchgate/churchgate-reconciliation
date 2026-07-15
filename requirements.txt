@@ -5,3 +5,5 @@ xlrd
 streamlit
 plotly
 pdfplumber
+bcrypt
+requests
